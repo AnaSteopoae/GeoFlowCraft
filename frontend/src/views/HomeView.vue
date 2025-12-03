@@ -48,7 +48,9 @@ export default {
     AppModelProcessingSearchRequestDialog, AppModelProcessingSearchResultsDialog
   },
   data() {
-    return {}
+    return {
+      pendingModelProcessingFeature: null
+    }
   },
   mounted() {
     const mapStore = useMapStore();
@@ -94,6 +96,9 @@ export default {
           case "MODEL_PROCESSING_ACTIVATE_DRAW_MODE": // TODO: Create an enum of events
             this.activateDrawModeForModelProcessing();
             break;
+          case "CONFIRM_MODEL_PROCESSING_AREA":
+            this.proceedWithModelProcessing();
+            break;
           default:
             console.error("Unknown event!")
             break;
@@ -108,6 +113,13 @@ export default {
     },
     onConfirmNo() {
       const dialogStore = useDialogStore();
+      const event = dialogStore.confirmDialogInfo.event;
+      
+      // Handle cancellation based on event type
+      if (event === "CONFIRM_MODEL_PROCESSING_AREA") {
+        this.cancelModelProcessing();
+      }
+      
       dialogStore.hideConfirmDialog();
     },
     activateDrawModeForModelProcessing() {
@@ -120,21 +132,39 @@ export default {
         mapStore.disableDrawInteration();
         mapStore.addDrawLayer(drawnFeature);
         
-        console.log("TODO: Display confirm tooltip on map")
+        this.pendingModelProcessingFeature = drawnFeature;
         
-        const geoJson = mapStore.getGeoJsonFromFeature(drawnFeature, "EPSG:4326");
-        
-        setTimeout(() => {
-            mapStore.removeDrawLayer();
-        }, 5000);
-
         const dialogStore = useDialogStore();
-        dialogStore.showModelProcessingSearchRequestDialog({
-          geoJson: geoJson
+        dialogStore.showConfirmDialog({
+          title: "Confirm Area Selection",
+          message: "Do you want to proceed with this area for model processing?",
+          event: "CONFIRM_MODEL_PROCESSING_AREA"
         });
       } catch (error) {
         this.$toast.add({ severity: "error", summary: "ERROR", detail: error , life: 3000 });
       }
+    },
+    proceedWithModelProcessing() {
+      const mapStore = useMapStore();
+      const dialogStore = useDialogStore();
+      
+      if (!this.pendingModelProcessingFeature) {
+        this.$toast.add({ severity: "error", summary: "Error", detail: "No area selected!", life: 3000 });
+        return;
+      }
+      
+      const geoJson = mapStore.getGeoJsonFromFeature(this.pendingModelProcessingFeature, "EPSG:4326");
+      
+      dialogStore.showModelProcessingSearchRequestDialog({
+        geoJson: geoJson
+      });
+      
+      // Keep the drawn layer visible for now
+    },
+    cancelModelProcessing() {
+      const mapStore = useMapStore();
+      mapStore.removeDrawLayer();
+      this.pendingModelProcessingFeature = null;
     }
   }
 }

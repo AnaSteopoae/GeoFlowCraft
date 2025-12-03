@@ -151,3 +151,5 @@ types/v3-generated.d.ts
 
 _local
 uploads/
+
+backend/data_geoserver/

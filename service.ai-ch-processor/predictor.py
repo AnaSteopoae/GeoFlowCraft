@@ -22,8 +22,13 @@ from gchm.utils.gdal_process import save_array_as_geotif
 from gchm.utils.parser import load_args_from_json, str2bool
 
 
-DEVICE = torch.device("cuda:0")
-print('DEVICE: ', DEVICE, torch.cuda.get_device_name(0))
+# Verifică dacă CUDA este disponibil, altfel folosește CPU
+if torch.cuda.is_available():
+    DEVICE = torch.device("cuda:0")
+    print('DEVICE: ', DEVICE, torch.cuda.get_device_name(0))
+else:
+    DEVICE = torch.device("cpu")
+    print('DEVICE: CPU (CUDA not available)')
 gdal.UseExceptions()
 
 today = datetime.date.today()
@@ -211,12 +216,12 @@ def run_inference(image_path: str) -> str:
     architecture_collection = Architectures(args=args)
     net = architecture_collection(args.architecture)(num_outputs=1)
 
-    net.cuda()  # move model to GPU
+    net.to(DEVICE)  # move model to configured device (CPU or GPU)
 
     # Load latest weights from checkpoint file (alternative load best val epoch from best_weights.pt)
     print('Loading model weights from latest checkpoint ...')
     checkpoint_path = Path(args.model_dir) / 'checkpoint.pt'
-    checkpoint = torch.load(checkpoint_path)
+    checkpoint = torch.load(checkpoint_path, map_location=DEVICE)
     model_weights = checkpoint['model_state_dict']
 
 

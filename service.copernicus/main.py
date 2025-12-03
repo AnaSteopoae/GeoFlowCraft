@@ -4,12 +4,21 @@ from pydantic import BaseModel
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
 import logging
+import os
+from dotenv import load_dotenv
 from auth import CopernicusAuth
 from stac_search import STACSearch
 from downloader import Sentinel2Downloader
 
+# Load environment variables from .env file
+load_dotenv()
+
 logging.basicConfig(level = logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Get download directory from environment variable, default to "downloads"
+DOWNLOAD_DIR = os.getenv("DOWNLOAD_DIR", "downloads")
+logger.info(f"Configured download directory: {DOWNLOAD_DIR}")
 
 app = FastAPI(title = "Copernicus Sentinel-2 Download API", version="1.0.0")
 
@@ -75,7 +84,7 @@ async def search_products(request: SearchRequest):
         token = auth.get_access_token()
         
         searcher = STACSearch(token)
-        items = searcher.search_sentinel2(
+        items = searcher.search_sentinel2_odata(
             geometry=request.geojson,
             start_date=start_date,
             end_date=end_date,
@@ -162,7 +171,7 @@ async def process_download(task_id: str, items: List):
         download_tasks[task_id]["total_items"] = len(items)
         download_tasks[task_id]["downloaded_items"] = 0
         
-        downloader = Sentinel2Downloader(token)
+        downloader = Sentinel2Downloader(token, download_dir=DOWNLOAD_DIR)
         downloaded_files = []
         
         for idx, item in enumerate(items):

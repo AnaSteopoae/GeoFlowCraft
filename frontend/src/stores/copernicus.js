@@ -22,6 +22,16 @@ export default defineStore('copernicus', {
             }
 
             return searchResponse
+        },
+        
+        async downloadImages(items) {
+            let downloadResponse = await copernicusService.download(items);
+            return downloadResponse;
+        },
+        
+        async checkDownloadStatus(taskId) {
+            let statusResponse = await copernicusService.getDownloadStatus(taskId);
+            return statusResponse;
         }
     }
 })

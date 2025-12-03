@@ -1,0 +1,43 @@
+import axios from 'axios';
+
+const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5555';
+
+export default {
+    /**
+     * Obține lista tuturor agenților AI disponibili
+     */
+    async getAvailableAgents() {
+        const response = await axios.get(`${API_URL}/api/ai/agents`);
+        return response.data;
+    },
+    
+    /**
+     * Verifică starea de sănătate a unui agent
+     */
+    async checkAgentHealth(agentId) {
+        const response = await axios.get(`${API_URL}/api/ai/agents/${agentId}/health`);
+        return response.data;
+    },
+    
+    /**
+     * Procesează date cu un agent specific
+     */
+    async processWithAgent(agentId, inputData) {
+        const response = await axios.post(
+            `${API_URL}/api/ai/agents/${agentId}/process`,
+            inputData
+        );
+        return response.data;
+    },
+    
+    /**
+     * Procesează o zonă selectată de utilizator
+     */
+    async processSelectedArea(agentId, areaData) {
+        const response = await axios.post(
+            `${API_URL}/api/ai/agents/${agentId}/process-area`,
+            { areaData }
+        );
+        return response.data;
+    }
+};

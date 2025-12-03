@@ -11,5 +11,19 @@ export default {
         });
 
         return response.data;
+    },
+
+    async download(items) {
+        let response = await axios.post(`${API_URL}/download`, {
+            items: items
+        });
+
+        return response.data;
+    },
+
+    async getDownloadStatus(taskId) {
+        let response = await axios.get(`${API_URL}/status/${taskId}`);
+
+        return response.data;
     }
 }

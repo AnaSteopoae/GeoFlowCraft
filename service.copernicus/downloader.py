@@ -6,13 +6,15 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 class Sentinel2Downloader:
-    def __init__(self, access_token: str):
+    def __init__(self, access_token: str, download_dir: str = "downloads"):
         self.access_token = access_token
         self.headers = {
             "Authorization": f"Bearer {access_token}"
         }
-        self.download_dir = Path("downloads")
-        self.download_dir.mkdir(exist_ok=True)
+        # Use configured download directory (can be shared volume in Docker)
+        self.download_dir = Path(download_dir)
+        self.download_dir.mkdir(exist_ok=True, parents=True)
+        logger.info(f"Download directory: {self.download_dir.absolute()}")
         self.session = requests.Session()
         self.session.headers.update(self.headers)
     
@@ -23,8 +25,8 @@ class Sentinel2Downloader:
         
         try:
             product_id = item["id"]
-            datetime_str = item.get("datetime", "").replace(":", "-").replace(".", "-")
-            product_dir = self.download_dir / f"{product_id}_{datetime_str}"
+            # Use product_id directly as directory name (already has .SAFE extension)
+            product_dir = self.download_dir / product_id
             product_dir.mkdir(exist_ok=True, parents=True)
             
             logger.info(f"Downloading full product '{product_id}' to '{product_dir}'")
@@ -41,6 +43,8 @@ class Sentinel2Downloader:
             
             if success and output_file.exists():
                 logger.info(f"Successfully downloaded full product: {output_file.stat().st_size} bytes")
+                # Return path to ZIP file - AI processor will handle extraction
+                return str(output_file)
             else:
                 logger.error(f"Failed to download full product {product_id}")
                 return ""

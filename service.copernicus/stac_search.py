@@ -17,7 +17,106 @@ class STACSearch:
             "Content-Type": "application/json"
         }
     
-    def search_sentinel2(
+    def search_sentinel2_odata(
+        self,
+        geometry: Dict[str, Any],
+        start_date: str,
+        end_date: str,
+        max_cloud_cover: float = 20.0,
+        limit: int = 50
+    ) -> List[Dict[str, Any]]:
+        """Search using OData API which has better Sentinel-2 support"""
+        try:
+            from shapely.geometry import shape
+            geom = shape(geometry)
+            bbox = list(geom.bounds)  # [minx, miny, maxx, maxy]
+            
+            # Format dates for OData
+            if isinstance(start_date, str):
+                start_date = start_date.replace('Z', '')
+            if isinstance(end_date, str):
+                end_date = end_date.replace('Z', '')
+            
+            # OData query for Sentinel-2
+            odata_url = "https://catalogue.dataspace.copernicus.eu/odata/v1/Products"
+            
+            # Build filter - search for Sentinel-2 products
+            filter_query = (
+                f"Collection/Name eq 'SENTINEL-2' and "
+                f"ContentDate/Start ge {start_date} and "
+                f"ContentDate/Start le {end_date} and "
+                f"OData.CSC.Intersects(area=geography'SRID=4326;POLYGON(("
+                f"{bbox[0]} {bbox[1]},{bbox[2]} {bbox[1]},{bbox[2]} {bbox[3]},"
+                f"{bbox[0]} {bbox[3]},{bbox[0]} {bbox[1]}))')"
+            )
+            
+            if max_cloud_cover < 100:
+                filter_query += f" and Attributes/OData.CSC.DoubleAttribute/any(att:att/Name eq 'cloudCover' and att/OData.CSC.DoubleAttribute/Value le {max_cloud_cover})"
+            
+            params = {
+                "$filter": filter_query,
+                "$top": limit,
+                "$orderby": "ContentDate/Start desc"
+            }
+            
+            logger.info(f"Searching OData API for Sentinel-2 with date range: {start_date} to {end_date}")
+            
+            response = requests.get(odata_url, params=params, headers=self.headers)
+            
+            if response.status_code != 200:
+                logger.error(f"OData search failed: {response.status_code} - {response.text}")
+                # Fall back to STAC search
+                return self.search_sentinel2_stac(geometry, start_date, end_date, max_cloud_cover, limit)
+            
+            response.raise_for_status()
+            results = response.json()
+            products = results.get("value", [])
+            
+            logger.info(f"Found {len(products)} Sentinel-2 products via OData")
+            
+            # Convert to our format (matching STAC format for frontend compatibility)
+            filtered_items = []
+            for product in products:
+                # Extract cloud cover from attributes
+                cloud_cover = 0
+                for attr in product.get("Attributes", []):
+                    if attr.get("Name") == "cloudCover":
+                        cloud_cover = attr.get("Value", 0)
+                        break
+                
+                # Create a STAC-like structure for frontend compatibility
+                stac_item = {
+                    "id": product.get("Name"),
+                    "properties": {
+                        "datetime": product.get("ContentDate", {}).get("Start"),
+                        "cloudCover": cloud_cover,
+                        "platform": "sentinel-2"
+                    },
+                    "bbox": None,
+                    "assets": {},
+                    "original_odata": product
+                }
+                
+                item_info = {
+                    "id": product.get("Name"),
+                    "datetime": product.get("ContentDate", {}).get("Start"),
+                    "cloud_cover": cloud_cover,
+                    "platform": "sentinel-2",
+                    "bbox": None,
+                    "assets": {},
+                    "stac_item": stac_item  # STAC-compatible format
+                }
+                filtered_items.append(item_info)
+                logger.info(f"✓ Found Sentinel-2: {item_info['id']}")
+            
+            return filtered_items
+            
+        except Exception as e:
+            logger.error(f"OData search failed: {str(e)}")
+            # Fall back to STAC
+            return self.search_sentinel2_stac(geometry, start_date, end_date, max_cloud_cover, limit)
+    
+    def search_sentinel2_stac(
         self,
         geometry: Dict[str, Any],
         start_date: str,
@@ -50,43 +149,93 @@ class STACSearch:
             geom = shape(geometry)
             bbox = list(geom.bounds)  # [minx, miny, maxx, maxy]
             
+            # Collect all items with pagination
+            all_items = []
+            page = 1
+            max_pages = 10  # Limit to 10 pages to avoid infinite loop
+            
             search_body = {
-                "collections": ["SENTINEL-2"],
                 "datetime": f"{start_date}/{end_date}",
                 "bbox": bbox,
-                "limit": limit
+                "limit": 100  # Items per page
             }
             
             logger.info(f"Searching STAC catalog with date range: {start_date} to {end_date}")
+            logger.info(f"Will paginate through results to find Sentinel-2")
             
-            response = requests.post(
-                f"{self.stac_url}/search",
-                json=search_body,
-                headers=self.headers
-            )
+            while page <= max_pages:
+                response = requests.post(
+                    f"{self.stac_url}/search",
+                    json=search_body,
+                    headers=self.headers
+                )
+                
+                if response.status_code != 200:
+                    logger.error(f"STAC search response: {response.status_code} - {response.text}")
+                    break
+                
+                response.raise_for_status()
+                results = response.json()
+                items = results.get("features", [])
+                
+                if not items:
+                    logger.info(f"No more items at page {page}")
+                    break
+                
+                all_items.extend(items)
+                logger.info(f"Page {page}: Got {len(items)} items (total: {len(all_items)})")
+                
+                # Check for next page link
+                links = results.get("links", [])
+                next_link = None
+                for link in links:
+                    if link.get("rel") == "next":
+                        next_link = link.get("href")
+                        break
+                
+                if not next_link:
+                    logger.info(f"No more pages available")
+                    break
+                
+                # Update search body with next page token if available
+                # Or break if we already have enough Sentinel-2 products
+                sentinel2_count = sum(1 for item in all_items if item.get("id", "").startswith(("S2A_", "S2B_")))
+                if sentinel2_count >= limit:
+                    logger.info(f"Found enough Sentinel-2 products ({sentinel2_count}), stopping pagination")
+                    break
+                
+                page += 1
             
-            if response.status_code != 200:
-                logger.error(f"STAC search response: {response.status_code} - {response.text}")
+            logger.info(f"Total items collected: {len(all_items)}")
             
-            response.raise_for_status()
+            # Filter for Sentinel-2 only
+            sentinel2_items = []
+            for item in all_items:
+                item_id = item.get("id", "")
+                if item_id.startswith("S2A_") or item_id.startswith("S2B_"):
+                    sentinel2_items.append(item)
+                    logger.info(f"✓ Found Sentinel-2: {item_id}")
             
-            results = response.json()
-            items = results.get("features", [])
+            logger.info(f"Filtered to {len(sentinel2_items)} Sentinel-2 products")
             
-            logger.info(f"Found {len(items)} Sentinel-2 products")
-            
+            # Apply cloud cover filter and build response
             filtered_items = []
-            for item in items:
-                item_info = {
-                    "id": item["id"],
-                    "datetime": item["properties"].get("datetime"),
-                    "cloud_cover": item["properties"].get("eo:cloud_cover"),
-                    "platform": item["properties"].get("platform"),
-                    "bbox": item.get("bbox"),
-                    "assets": self._get_relevant_assets(item.get("assets", {})),
-                    "stac_item": item
-                }
-                filtered_items.append(item_info)
+            for item in sentinel2_items:
+                cloud_cover = item["properties"].get("eo:cloud_cover", 0)
+                
+                if cloud_cover <= max_cloud_cover:
+                    item_info = {
+                        "id": item["id"],
+                        "datetime": item["properties"].get("datetime"),
+                        "cloud_cover": cloud_cover,
+                        "platform": item["properties"].get("platform"),
+                        "bbox": item.get("bbox"),
+                        "assets": self._get_relevant_assets(item.get("assets", {})),
+                        "stac_item": item
+                    }
+                    filtered_items.append(item_info)
+            
+            logger.info(f"Final result: {len(filtered_items)} Sentinel-2 products with cloud cover <= {max_cloud_cover}%")
             
             return filtered_items
             
