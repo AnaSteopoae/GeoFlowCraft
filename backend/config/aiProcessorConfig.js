@@ -25,7 +25,8 @@ module.exports = {
     },
     
     // Timeout pentru requesturi către servicii AI (în ms)
-    requestTimeout: 300000, // 5 minute
+    // Procesarea pe CPU poate dura 15-30 minute pentru imagini mari
+    requestTimeout: 1800000, // 30 minute (1800000 ms)
     
     // Directory pentru date temporare
     tempDataDir: process.env.TEMP_DATA_DIR || './uploads/ai-temp',

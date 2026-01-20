@@ -547,6 +547,30 @@ async function importCSVToPostGIS(csvFilePath, tableName, srs, latColumn, lonCol
 
 // Helper function to upload file to a host using ssh
 async function uploadFileToHost(hostConfig, localFilePath, remoteFilePath) {
+    // For localhost/Docker: use direct file copy instead of SSH
+    if (hostConfig.host === 'localhost' || hostConfig.host === '127.0.0.1') {
+        try {
+            // Convert container path to host path
+            // /opt/geoserver/data_dir/... -> backend/data_geoserver/...
+            const hostPath = remoteFilePath.replace('/opt/geoserver/data_dir', 
+                path.join(__dirname, '../data_geoserver'));
+            
+            // Ensure directory exists
+            const dir = path.dirname(hostPath);
+            if (!fs.existsSync(dir)) {
+                fs.mkdirSync(dir, { recursive: true });
+            }
+            
+            fs.copyFileSync(localFilePath, hostPath);
+            console.log(`File copied locally to: ${hostPath}`);
+            return;
+        } catch (error) {
+            console.error(`Error copying file locally:`, error.message);
+            throw error;
+        }
+    }
+    
+    // For remote hosts: use SSH
     const sshClient = new NodeSSH();
     try {
         await sshClient.connect(hostConfig);
@@ -563,6 +587,30 @@ async function uploadFileToHost(hostConfig, localFilePath, remoteFilePath) {
 }
 
 async function uploadDirectoryToHost(hostConfig, localDirPath, remoteDirPath) {
+    // For localhost/Docker: use direct directory copy instead of SSH
+    if (hostConfig.host === 'localhost' || hostConfig.host === '127.0.0.1') {
+        try {
+            // Convert container path to host path
+            const hostPath = remoteDirPath.replace('/opt/geoserver/data_dir', 
+                path.join(__dirname, '../data_geoserver'));
+            
+            // Ensure parent directory exists
+            const parentDir = path.dirname(hostPath);
+            if (!fs.existsSync(parentDir)) {
+                fs.mkdirSync(parentDir, { recursive: true });
+            }
+            
+            // Copy directory recursively
+            copyDirectoryRecursive(localDirPath, hostPath);
+            console.log(`Directory copied locally to: ${hostPath}`);
+            return;
+        } catch (error) {
+            console.error(`Error copying directory locally:`, error.message);
+            throw error;
+        }
+    }
+    
+    // For remote hosts: use SSH
     const sshClient = new NodeSSH();
     try {
         await sshClient.connect(hostConfig);
@@ -582,7 +630,50 @@ async function uploadDirectoryToHost(hostConfig, localDirPath, remoteDirPath) {
     }
 }
 
+// Helper function to copy directory recursively
+function copyDirectoryRecursive(source, destination) {
+    if (!fs.existsSync(destination)) {
+        fs.mkdirSync(destination, { recursive: true });
+    }
+    
+    const entries = fs.readdirSync(source, { withFileTypes: true });
+    
+    for (const entry of entries) {
+        const srcPath = path.join(source, entry.name);
+        const destPath = path.join(destination, entry.name);
+        
+        if (entry.isDirectory()) {
+            copyDirectoryRecursive(srcPath, destPath);
+        } else {
+            fs.copyFileSync(srcPath, destPath);
+        }
+    }
+}
+
 async function deleteFileOnHost(hostConfig, remoteFilePath) {
+    // For localhost/Docker: use direct file deletion instead of SSH
+    if (hostConfig.host === 'localhost' || hostConfig.host === '127.0.0.1') {
+        try {
+            // Convert container path to host path
+            const hostPath = remoteFilePath.replace('/opt/geoserver/data_dir', 
+                path.join(__dirname, '../data_geoserver'));
+            
+            if (fs.existsSync(hostPath)) {
+                if (fs.lstatSync(hostPath).isDirectory()) {
+                    fs.rmSync(hostPath, { recursive: true, force: true });
+                } else {
+                    fs.unlinkSync(hostPath);
+                }
+                console.log(`Deleted locally: ${hostPath}`);
+            }
+            return;
+        } catch (error) {
+            console.error(`Error deleting file/directory locally:`, error.message);
+            throw error;
+        }
+    }
+    
+    // For remote hosts: use SSH
     const sshClient = new NodeSSH();
     try {
         await sshClient.connect(hostConfig);

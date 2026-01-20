@@ -17,4 +17,13 @@ router.post('/agents/:agentId/process-area', aiProcessorController.processSelect
 // Endpoint special pentru procesare Sentinel-2 (backward compatibility)
 router.post('/sentinel2/process', aiProcessorController.processSentinel2Images);
 
+// Obține rezultatele procesării pentru un produs specific
+router.get('/results/:productId', aiProcessorController.getProcessingResults);
+
+// Obține toate rezultatele disponibile
+router.get('/results', aiProcessorController.getAllProcessingResults);
+
+// Descarcă un fișier rezultat
+router.get('/download/:filename', aiProcessorController.downloadResult);
+
 module.exports = router;

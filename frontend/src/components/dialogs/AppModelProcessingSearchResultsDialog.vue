@@ -20,7 +20,7 @@
                     <div class="w-[150px] font-bold">Date</div>
                     <div class="w-[150px] font-bold">Cloud cover</div>
                     <div class="w-[200px] font-bold">ID</div>
-                    <div class="w-[50px]"></div>
+                    <div class="w-[100px] font-bold">Actions</div>
                 </div>
                 <div class="max-h-[200px] bg-gray-500/10 overflow-y-auto rounded-lg">
                     <div v-for="(item, index) in compatibleAreaItems"
@@ -34,13 +34,14 @@
                         </div>
                         <div class="w-[150px] flex items-center overflow-hidden">{{ item.stac_item.properties.cloudCover }}</div>
                         <div class="w-[200px] flex items-center overflow-hidden">{{ item.id }}</div>
-                        <div class="w-[50px] flex items-center">
+                        <div class="w-[100px] flex items-center gap-1">
                             <PrimeButton 
                                 v-if="item.visible"
                                 @click="hideAreaItemFromMap(item)"
                                 icon="pi pi-eye" 
                                 variant="text" rounded 
                                 severity="success"
+                                size="small"
                                 v-tooltip.bottom="'Hide area item from map'"
                             />
                             <PrimeButton 
@@ -49,7 +50,17 @@
                                 icon="pi pi-eye-slash"
                                 variant="text" rounded 
                                 severity="danger"
+                                size="small"
                                 v-tooltip.bottom="'Show area item on map'"
+                            />
+                            <PrimeButton 
+                                v-if="hasResultsForProduct(item.id)"
+                                @click="showResultsForProduct(item.id)"
+                                icon="pi pi-chart-bar" 
+                                variant="text" rounded 
+                                severity="info"
+                                size="small"
+                                v-tooltip.bottom="'View processing results'"
                             />
                         </div>
                     </div>
@@ -61,9 +72,19 @@
         </div>
         <!-- Buttons -->
         <div class="flex justify-between items-center">
-            <PrimeButton label="Close" icon="pi pi-times" severity="danger"
-                @click="close"
-            ></PrimeButton>
+            <div class="flex gap-2">
+                <PrimeButton label="Close" icon="pi pi-times" severity="danger"
+                    @click="close"
+                ></PrimeButton>
+                <PrimeButton 
+                    label="View Results" 
+                    icon="pi pi-list" 
+                    severity="info" 
+                    outlined
+                    @click="showAllResults"
+                    v-tooltip.bottom="'View all processing results'"
+                ></PrimeButton>
+            </div>
             <PrimeButton label="Process" icon="pi pi-microchip" severity="success" 
                 @click="process"
                 v-tooltip.bottom="(compatibleAreaItems?.filter(areaItem => areaItem.selected == true).length > 0) 
@@ -73,6 +94,12 @@
             ></PrimeButton>
         </div>
         <PrimeToast />
+        
+        <!-- Results Dialog -->
+        <AppProcessingResultsDialog 
+            v-model="showResultsDialog"
+            :productId="selectedProductId"
+        />
     </PrimeDialog>
 </template>
 
@@ -82,15 +109,21 @@ import useDialogStore from "@/stores/dialog";
 import useCopernicusStore from "@/stores/copernicus";
 import useMapStore from "@/stores/map";
 import useAIAgentStore from "@/stores/aiAgent";
+import AppProcessingResultsDialog from "@/components/dialogs/AppProcessingResultsDialog.vue";
 
 import moment from 'moment';
 import { transformExtent } from 'ol/proj';
 
 export default {
     name: "AppModelProcessingSearchResultsDialog",
-    components: {},
+    components: {
+        AppProcessingResultsDialog
+    },
     data() {
-        return {}
+        return {
+            showResultsDialog: false,
+            selectedProductId: null
+        }
     },
     computed: {
         ...mapState(useDialogStore, ["modelProcessingSearchResultsDialog"]),
@@ -271,6 +304,17 @@ export default {
                 });
 
                 console.log('AI Processing result:', result);
+                
+                // Încarcă rezultatele pentru acest produs
+                await aiAgentStore.loadProcessingResults(item.id);
+                
+                // Afișează notificare cu buton pentru vizualizare rezultate
+                this.$toast.add({ 
+                    severity: "success", 
+                    summary: "Processing Complete", 
+                    detail: `Image ${item.id} processed successfully!`, 
+                    life: 5000
+                });
 
                 return result;
 
@@ -279,6 +323,23 @@ export default {
                 throw error;
             }
         },
+        
+        showAllResults() {
+            // Deschide dialogul cu toate rezultatele (fără productId specific)
+            this.selectedProductId = null;
+            this.showResultsDialog = true;
+        },
+        
+        showResultsForProduct(productId) {
+            this.selectedProductId = productId;
+            this.showResultsDialog = true;
+        },
+        
+        hasResultsForProduct(productId) {
+            const aiAgentStore = useAIAgentStore();
+            return aiAgentStore.processingResults[productId] !== undefined;
+        },
+        
         close() {
             const dialogStore = useDialogStore();
             dialogStore.hideModelProcessingSearchResultsDialog();

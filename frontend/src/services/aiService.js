@@ -39,5 +39,28 @@ export default {
             { areaData }
         );
         return response.data;
+    },
+    
+    /**
+     * Obține rezultatele procesării pentru un produs specific
+     */
+    async getProcessingResults(productId) {
+        const response = await axios.get(`${API_URL}/api/ai/results/${productId}`);
+        return response.data;
+    },
+    
+    /**
+     * Obține toate rezultatele disponibile
+     */
+    async getAllProcessingResults() {
+        const response = await axios.get(`${API_URL}/api/ai/results`);
+        return response.data;
+    },
+    
+    /**
+     * Generează URL pentru descărcarea unui fișier rezultat
+     */
+    getDownloadUrl(filename) {
+        return `${API_URL}/api/ai/download/${filename}`;
     }
 };

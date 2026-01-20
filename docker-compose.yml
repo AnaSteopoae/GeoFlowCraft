@@ -1,0 +1,69 @@
+version: '3.8'
+
+services:
+  # AI Canopy Height Processor Service
+  ai-ch-processor:
+    build:
+      context: ./service.ai-ch-processor
+      dockerfile: Dockerfile
+    container_name: ai-ch-processor
+    ports:
+      - "5556:5555"
+    volumes:
+      # Shared data directory (pentru Sentinel-2 images)
+      - ./shared-data:/app/test_data
+      # Output directory (pentru GeoTIFF results)
+      - ./service.ai-ch-processor/output:/app/output
+    environment:
+      - INPUT_DATA_DIR=/app/test_data
+    restart: unless-stopped
+    networks:
+      - geoflowcraft-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5555/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Backend API (Node.js)
+  # Uncomment to run backend in Docker
+  # backend:
+  #   build:
+  #     context: ./backend
+  #     dockerfile: Dockerfile
+  #   container_name: geoflowcraft-backend
+  #   ports:
+  #     - "5555:5555"
+  #   environment:
+  #     - NODE_ENV=production
+  #   depends_on:
+  #     - ai-ch-processor
+  #   networks:
+  #     - geoflowcraft-network
+
+  # Copernicus Service (Python FastAPI)
+  # Uncomment to run Copernicus service in Docker
+  # copernicus:
+  #   build:
+  #     context: ./service.copernicus
+  #     dockerfile: Dockerfile
+  #   container_name: copernicus-service
+  #   ports:
+  #     - "8000:8000"
+  #   volumes:
+  #     - ./shared-data:/app/downloads
+  #   environment:
+  #     - DOWNLOAD_DIR=/app/downloads
+  #   env_file:
+  #     - ./service.copernicus/.env
+  #   networks:
+  #     - geoflowcraft-network
+
+networks:
+  geoflowcraft-network:
+    driver: bridge
+
+volumes:
+  shared-data:
+  ai-output:

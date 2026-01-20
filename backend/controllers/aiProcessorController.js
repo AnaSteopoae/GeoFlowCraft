@@ -1,5 +1,7 @@
 const aiProcessorService = require('../services/aiProcessorService');
 const { handleError } = require('../utils/controllerUtils');
+const fs = require('fs');
+const path = require('path');
 
 /**
  * Obține lista agenților AI disponibili
@@ -73,6 +75,70 @@ exports.processSelectedArea = async (req, res) => {
         const result = await aiProcessorService.processSelectedArea(agentId, areaData);
         
         res.status(200).json(result);
+    } catch (error) {
+        handleError(res, error);
+    }
+};
+
+/**
+ * Obține rezultatele procesării pentru un produs specific
+ */
+exports.getProcessingResults = async (req, res) => {
+    try {
+        const { productId } = req.params;
+        
+        const results = await aiProcessorService.getProcessingResults(productId);
+        res.status(200).json(results);
+    } catch (error) {
+        handleError(res, error);
+    }
+};
+
+/**
+ * Obține toate rezultatele procesării disponibile
+ */
+exports.getAllProcessingResults = async (req, res) => {
+    try {
+        const results = await aiProcessorService.getAllProcessingResults();
+        res.status(200).json(results);
+    } catch (error) {
+        handleError(res, error);
+    }
+};
+
+/**
+ * Descarcă un fișier GeoTIFF rezultat
+ */
+exports.downloadResult = async (req, res) => {
+    try {
+        const { filename } = req.params;
+        const outputDir = path.join(__dirname, '../../service.ai-ch-processor/output');
+        const filePath = path.join(outputDir, filename);
+        
+        // Verifică dacă fișierul există
+        if (!fs.existsSync(filePath)) {
+            return res.status(404).json({
+                success: false,
+                message: 'File not found'
+            });
+        }
+        
+        // Verifică că este un fișier .tif
+        if (!filename.endsWith('.tif')) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid file type'
+            });
+        }
+        
+        // Setează headerele pentru download
+        res.setHeader('Content-Type', 'image/tiff');
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        
+        // Trimite fișierul
+        const fileStream = fs.createReadStream(filePath);
+        fileStream.pipe(res);
+        
     } catch (error) {
         handleError(res, error);
     }

@@ -89,6 +89,106 @@ class AIProcessorService {
     }
     
     /**
+     * Listează rezultatele procesării pentru un produs specific
+     */
+    async getProcessingResults(productId) {
+        const outputDir = path.join(__dirname, '../../service.ai-ch-processor/output');
+        
+        if (!fs.existsSync(outputDir)) {
+            return {
+                success: false,
+                message: 'Output directory not found',
+                results: []
+            };
+        }
+        
+        try {
+            const files = fs.readdirSync(outputDir);
+            const productFiles = files.filter(file => 
+                file.startsWith(productId) && file.endsWith('.tif')
+            );
+            
+            const results = productFiles.map(filename => {
+                const filePath = path.join(outputDir, filename);
+                const stats = fs.statSync(filePath);
+                
+                return {
+                    filename: filename,
+                    path: filePath,
+                    size: stats.size,
+                    type: filename.includes('predictions') ? 'predictions' : 'std',
+                    createdAt: stats.birthtime,
+                    modifiedAt: stats.mtime
+                };
+            });
+            
+            return {
+                success: true,
+                productId: productId,
+                count: results.length,
+                results: results
+            };
+        } catch (error) {
+            throw new Error(`Failed to list results: ${error.message}`);
+        }
+    }
+    
+    /**
+     * Listează toate rezultatele disponibile
+     */
+    async getAllProcessingResults() {
+        const outputDir = path.join(__dirname, '../../service.ai-ch-processor/output');
+        
+        if (!fs.existsSync(outputDir)) {
+            return {
+                success: false,
+                message: 'Output directory not found',
+                results: []
+            };
+        }
+        
+        try {
+            const files = fs.readdirSync(outputDir);
+            const tifFiles = files.filter(file => file.endsWith('.tif'));
+            
+            // Grupează rezultatele după productId
+            const groupedResults = {};
+            
+            tifFiles.forEach(filename => {
+                // Extract product ID (format: S2X_MSIL2A_...)
+                const match = filename.match(/^(S2[AB]_MSIL[12][AC]_\d+T\d+_[^_]+_[^_]+_[^_]+_[^_]+)/);
+                if (match) {
+                    const productId = match[1];
+                    
+                    if (!groupedResults[productId]) {
+                        groupedResults[productId] = [];
+                    }
+                    
+                    const filePath = path.join(outputDir, filename);
+                    const stats = fs.statSync(filePath);
+                    
+                    groupedResults[productId].push({
+                        filename: filename,
+                        path: filePath,
+                        size: stats.size,
+                        type: filename.includes('predictions') ? 'predictions' : 'std',
+                        createdAt: stats.birthtime,
+                        modifiedAt: stats.mtime
+                    });
+                }
+            });
+            
+            return {
+                success: true,
+                count: Object.keys(groupedResults).length,
+                results: groupedResults
+            };
+        } catch (error) {
+            throw new Error(`Failed to list all results: ${error.message}`);
+        }
+    }
+    
+    /**
      * Procesează o zonă selectată de utilizator cu modelul ales
      */
     async processSelectedArea(agentId, areaData) {

@@ -153,3 +153,20 @@ _local
 uploads/
 
 backend/data_geoserver/
+
+# Sentinel-2 data (large files)
+*.SAFE/
+**/*.SAFE/
+shared-data/**/*.SAFE/
+
+# AI processing outputs
+service.ai-ch-processor/output/*.tif
+service.ai-ch-processor/output/*.tiff
+
+# GeoServer data layers
+backend/data_geoserver/data/*.tif
+backend/data_geoserver/data/*.tiff
+
+# Temporary downloads
+service.copernicus/downloads/
+*.zip
