@@ -20,7 +20,8 @@
     "multer": "^2.0.2",
     "node-ssh": "^13.2.0",
     "pg": "^8.14.1",
-    "strip-bom-stream": "^5.0.0"
+    "strip-bom-stream": "^5.0.0",
+    "uuid": "^13.0.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.9"

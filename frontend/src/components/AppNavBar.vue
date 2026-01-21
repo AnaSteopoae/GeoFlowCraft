@@ -1,6 +1,13 @@
 <template>
     <div class="bg-gray-800">
+        <!-- Processing Results Dialog -->
+        <AppProcessingResultsDialog 
+            v-model="showProcessingResultsDialog"
+            :productId="null"
+        />
+        
         <nav class="min-w-[200px] flex flex-row items-center gap-2 p-2 shadow-lg shadow-green-500/50">
+
             <!-- Logo -->
             <div class="flex flex-row items-center justify-center gap-2">
                 <!-- Image -->
@@ -19,6 +26,13 @@
             <PrimeButton label="Model processing" icon="pi pi-microchip" 
                 @click="showDrawConfirmDialog"
             />
+            <PrimeButton 
+                label="View Results" 
+                icon="pi pi-chart-bar" 
+                severity="info" 
+                outlined
+                @click="showResultsDialog"
+            />
         </nav>
     </div>
 </template>
@@ -26,14 +40,18 @@
 <script>
 import { RouterLink } from 'vue-router'
 import useDialogStore from "@/stores/dialog";
+import AppProcessingResultsDialog from "@/components/dialogs/AppProcessingResultsDialog.vue";
 
 export default {
     name: "AppNavBar",
     components: {
-        RouterLink
+        RouterLink,
+        AppProcessingResultsDialog
     },
     data() {
-        return {}
+        return {
+            showProcessingResultsDialog: false
+        }
     },
     computed: {},
     methods: {
@@ -46,6 +64,9 @@ export default {
                 yesButtonText: "Confirm",
                 event: "MODEL_PROCESSING_ACTIVATE_DRAW_MODE" // TODO: Create an enum of events
             });
+        },
+        showResultsDialog() {
+            this.showProcessingResultsDialog = true;
         }
     }
 }

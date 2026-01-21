@@ -72,19 +72,9 @@
         </div>
         <!-- Buttons -->
         <div class="flex justify-between items-center">
-            <div class="flex gap-2">
-                <PrimeButton label="Close" icon="pi pi-times" severity="danger"
-                    @click="close"
-                ></PrimeButton>
-                <PrimeButton 
-                    label="View Results" 
-                    icon="pi pi-list" 
-                    severity="info" 
-                    outlined
-                    @click="showAllResults"
-                    v-tooltip.bottom="'View all processing results'"
-                ></PrimeButton>
-            </div>
+            <PrimeButton label="Close" icon="pi pi-times" severity="danger"
+                @click="close"
+            ></PrimeButton>
             <PrimeButton label="Process" icon="pi pi-microchip" severity="success" 
                 @click="process"
                 v-tooltip.bottom="(compatibleAreaItems?.filter(areaItem => areaItem.selected == true).length > 0) 
