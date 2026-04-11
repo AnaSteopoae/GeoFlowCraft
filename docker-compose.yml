@@ -1,5 +1,4 @@
 version: '3.8'
-
 services:
   # AI Canopy Height Processor Service
   ai-ch-processor:
@@ -26,6 +25,29 @@ services:
       retries: 3
       start_period: 40s
 
+  # AI Super-Resolution Processor Service
+  ai-sr-processor:
+    build:
+      context: ./service.ai-sr-processor
+      dockerfile: Dockerfile
+    container_name: ai-sr-processor
+    ports:
+      - "5557:5555"
+    volumes:
+      # Shared data — primește GeoTIFF-urile S2+S1 de la backend
+      - ./shared-data:/app/input_data
+      # Output — GeoTIFF-uri super-rezolvate
+      - ./service.ai-sr-processor/output:/app/output
+    restart: unless-stopped
+    networks:
+      - geoflowcraft-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5555/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
   # Backend API (Node.js)
   # Uncomment to run backend in Docker
   # backend:
@@ -39,6 +61,7 @@ services:
   #     - NODE_ENV=production
   #   depends_on:
   #     - ai-ch-processor
+  #     - ai-sr-processor
   #   networks:
   #     - geoflowcraft-network
 
