@@ -1,8 +1,6 @@
 <template>
     <PrimeDialog v-model:visible="modelProcessingSearchResultsDialog.visible" header="Search results" :closable="false">
-        <!-- List of the search results -->
         <div class="mb-4">
-            <!-- Warning message if no compatible images -->
             <div v-if="areaItems?.length > 0 && compatibleAreaItems.length === 0" class="mb-3 p-3 bg-yellow-500/20 border border-yellow-500 rounded-lg">
                 <div class="flex items-center gap-2">
                     <i class="pi pi-exclamation-triangle text-yellow-400"></i>
@@ -70,7 +68,6 @@
                 There is not data.
             </div>
         </div>
-        <!-- Buttons -->
         <div class="flex justify-between items-center">
             <PrimeButton label="Close" icon="pi pi-times" severity="danger"
                 @click="close"
@@ -85,7 +82,6 @@
         </div>
         <PrimeToast />
         
-        <!-- Results Dialog -->
         <AppProcessingResultsDialog 
             v-model="showResultsDialog"
             :productId="selectedProductId"
@@ -116,10 +112,9 @@ export default {
         }
     },
     computed: {
-        ...mapState(useDialogStore, ["modelProcessingSearchResultsDialog"]),
+        ...mapState(useDialogStore, ["modelProcessingSearchRequestDialog", "modelProcessingSearchResultsDialog"]),
         ...mapState(useCopernicusStore, ["areaItems"]),
         
-        // Filtrează doar imaginile compatibile cu modelul AI selectat
         compatibleAreaItems() {
             const aiAgentStore = useAIAgentStore();
             const selectedAgent = aiAgentStore.getSelectedAgent;
@@ -128,12 +123,16 @@ export default {
                 return this.areaItems;
             }
             
-            // Filtrează în funcție de inputFormat al agentului
             if (selectedAgent.inputFormat === 'sentinel2-safe') {
-                // Filtrează doar imagini Sentinel-2 Level-2A (conțin SCL band)
-                // Format: S2A_MSIL2A_... sau S2B_MSIL2A_...
                 return this.areaItems.filter(item => 
                     (item.id.startsWith('S2A_MSIL2A_') || item.id.startsWith('S2B_MSIL2A_'))
+                );
+            }
+            
+            if (selectedAgent.inputFormat === 'sentinel2-s1-stack') {
+                return this.areaItems.filter(item => 
+                    item.id.startsWith('S2A_MSIL2A_') || item.id.startsWith('S2B_MSIL2A_') ||
+                    item.id.startsWith('S2A_MSIL1C_') || item.id.startsWith('S2B_MSIL1C_')
                 );
             }
             
@@ -142,29 +141,59 @@ export default {
     },
     methods: {
         showAreaItemOnMap(item) {
-            // item.bbox is a bounding box: [minX, minY, maxX, maxY]
-            // bbox coordinates are in EPSG:4326 (WGS84 longitude/latitude)
-            // OpenLayers' default 
             const bboxWebMercator = transformExtent(item.bbox, 'EPSG:4326', 'EPSG:3857')
             const polygonCoordinates = [
-                [bboxWebMercator[0], bboxWebMercator[1]], // bottom-left (minX, minY)
-                [bboxWebMercator[2], bboxWebMercator[1]], // bottom-right (maxX, minY)
-                [bboxWebMercator[2], bboxWebMercator[3]], // top-right (maxX, maxY)
-                [bboxWebMercator[0], bboxWebMercator[3]], // top-left (minX, maxY)
-                [bboxWebMercator[0], bboxWebMercator[1]] // close the polygon
+                [bboxWebMercator[0], bboxWebMercator[1]],
+                [bboxWebMercator[2], bboxWebMercator[1]],
+                [bboxWebMercator[2], bboxWebMercator[3]],
+                [bboxWebMercator[0], bboxWebMercator[3]],
+                [bboxWebMercator[0], bboxWebMercator[1]]
             ]
 
             const mapStore = useMapStore();
             mapStore.addVectorLayer(item.id, polygonCoordinates);
-
             item.visible = true;
         },
         hideAreaItemFromMap(item) {
             const mapStore = useMapStore();
             mapStore.removeVectorLayer(item.id);
-
             item.visible = false;
         },
+
+        /**
+         * Extrage bbox din zona desenată de utilizator pe hartă.
+         * Folosit ca fallback când item.bbox e null (OData nu returnează bbox).
+         */
+        getBboxFromSearchArea() {
+            const geoJson = this.modelProcessingSearchRequestDialog.requestInfo?.geoJson;
+            
+            if (!geoJson) return null;
+            
+            let coords;
+            if (geoJson.type === 'Polygon') {
+                coords = geoJson.coordinates[0];
+            } else if (geoJson.type === 'MultiPolygon') {
+                coords = geoJson.coordinates[0][0];
+            } else if (geoJson.type === 'FeatureCollection') {
+                const geom = geoJson.features[0]?.geometry;
+                if (!geom) return null;
+                coords = geom.type === 'Polygon' 
+                    ? geom.coordinates[0] 
+                    : geom.coordinates[0][0];
+            }
+            
+            if (!coords || coords.length === 0) return null;
+            
+            const lons = coords.map(c => c[0]);
+            const lats = coords.map(c => c[1]);
+            return [
+                Math.min(...lons),
+                Math.min(...lats),
+                Math.max(...lons),
+                Math.max(...lats)
+            ];
+        },
+
         async process() {
             const selectedItems = this.compatibleAreaItems.filter(item => item.selected);
             
@@ -178,7 +207,6 @@ export default {
                 return;
             }
 
-            // Verifică dacă un model AI este selectat
             const aiAgentStore = useAIAgentStore();
             if (!aiAgentStore.selectedAgent) {
                 this.$toast.add({ 
@@ -198,10 +226,8 @@ export default {
             });
 
             try {
-                // Închide dialogul
                 this.close();
 
-                // Pentru fiecare imagine selectată, procesează
                 for (const item of selectedItems) {
                     await this.processImage(item, aiAgentStore.selectedAgent);
                 }
@@ -228,7 +254,7 @@ export default {
             try {
                 console.log(`Processing image ${item.id} with agent ${agentId}`);
 
-                // Pas 1: Descarcă imaginea prin serviciul Copernicus
+                // ── Pas 1: Descarcă S2 ──
                 this.$toast.add({ 
                     severity: "info", 
                     summary: "Downloading", 
@@ -246,19 +272,21 @@ export default {
                 const taskId = downloadResponse.task_id;
                 console.log('Download task ID:', taskId);
 
-                // Pas 2: Așteaptă finalizarea descărcării (polling cu timeout)
+                // ── Pas 2: Polling descărcare S2 ──
                 let downloadCompleted = false;
+                let downloadResult = null;
                 let attempts = 0;
-                const maxAttempts = 60; // 5 minute (5 sec/attempt)
+                const maxAttempts = 60;
 
                 while (!downloadCompleted && attempts < maxAttempts) {
-                    await new Promise(resolve => setTimeout(resolve, 5000)); // Așteaptă 5 secunde
+                    await new Promise(resolve => setTimeout(resolve, 5000));
                     
                     const statusResponse = await copernicusStore.checkDownloadStatus(taskId);
                     console.log('Download status:', statusResponse.status);
 
                     if (statusResponse.status === 'completed') {
                         downloadCompleted = true;
+                        downloadResult = statusResponse;
                         
                         this.$toast.add({ 
                             severity: "success", 
@@ -277,7 +305,7 @@ export default {
                     throw new Error('Download timeout - taking too long');
                 }
 
-                // Pas 3: Procesează cu AI
+                // ── Pas 3: Procesează cu AI (diferit per agent) ──
                 this.$toast.add({ 
                     severity: "info", 
                     summary: "Processing", 
@@ -286,19 +314,51 @@ export default {
                 });
 
                 const aiAgentStore = useAIAgentStore();
-                
-                // Trimite numele directorului și ZIP-ul va fi găsit automat
-                // Format: product_id/product_id.zip
-                const result = await aiAgentStore.processWithSelectedAgent({
-                    image_filenames: [`${item.id}/${item.id}.zip`]
-                });
+                let result;
+
+                if (agentId === 'sr-processor') {
+                    // ── SR: trimite s2_path, bbox, target_date ──
+                    const dateMatch = item.id.match(/(\d{8})T/);
+                    const targetDate = dateMatch 
+                        ? `${dateMatch[1].substring(0,4)}-${dateMatch[1].substring(4,6)}-${dateMatch[1].substring(6,8)}`
+                        : item.datetime.substring(0, 10);
+
+                    const s2Path = downloadResult.files 
+                        ? downloadResult.files[0] 
+                        : `${item.id}/${item.id}.zip`;
+
+                    // Bbox: din item sau fallback din zona desenată pe hartă
+                    const bbox = item.bbox || this.getBboxFromSearchArea();
+                    
+                    if (!bbox) {
+                        throw new Error('Could not determine bounding box for SR processing');
+                    }
+
+                    this.$toast.add({ 
+                        severity: "info", 
+                        summary: "Super Resolution", 
+                        detail: `Downloading SAR data and applying SR (mode: ${aiAgentStore.selectedSRMode})...`, 
+                        life: 10000
+                    });
+
+                    result = await aiAgentStore.processWithSelectedAgent({
+                        s2_path: s2Path,
+                        bbox: bbox,
+                        target_date: targetDate,
+                        mode: aiAgentStore.selectedSRMode
+                    });
+
+                } else {
+                    // ── CHM și alți agenți: format existent ──
+                    result = await aiAgentStore.processWithSelectedAgent({
+                        image_filenames: [`${item.id}/${item.id}.zip`]
+                    });
+                }
 
                 console.log('AI Processing result:', result);
                 
-                // Încarcă rezultatele pentru acest produs
                 await aiAgentStore.loadProcessingResults(item.id);
                 
-                // Afișează notificare cu buton pentru vizualizare rezultate
                 this.$toast.add({ 
                     severity: "success", 
                     summary: "Processing Complete", 
@@ -315,7 +375,6 @@ export default {
         },
         
         showAllResults() {
-            // Deschide dialogul cu toate rezultatele (fără productId specific)
             this.selectedProductId = null;
             this.showResultsDialog = true;
         },

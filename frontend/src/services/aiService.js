@@ -10,7 +10,7 @@ export default {
         const response = await axios.get(`${API_URL}/api/ai/agents`);
         return response.data;
     },
-    
+
     /**
      * Verifică starea de sănătate a unui agent
      */
@@ -18,7 +18,7 @@ export default {
         const response = await axios.get(`${API_URL}/api/ai/agents/${agentId}/health`);
         return response.data;
     },
-    
+
     /**
      * Procesează date cu un agent specific
      */
@@ -29,7 +29,7 @@ export default {
         );
         return response.data;
     },
-    
+
     /**
      * Procesează o zonă selectată de utilizator
      */
@@ -40,7 +40,15 @@ export default {
         );
         return response.data;
     },
-    
+
+    /**
+     * Obține modurile SR disponibile (fidelity, balanced, sharp + alpha)
+     */
+    async getSRModes() {
+        const response = await axios.get(`${API_URL}/api/ai/agents/sr-processor/modes`);
+        return response.data;
+    },
+
     /**
      * Obține rezultatele procesării pentru un produs specific
      */
@@ -48,7 +56,7 @@ export default {
         const response = await axios.get(`${API_URL}/api/ai/results/${productId}`);
         return response.data;
     },
-    
+
     /**
      * Obține toate rezultatele disponibile
      */
@@ -56,7 +64,7 @@ export default {
         const response = await axios.get(`${API_URL}/api/ai/results`);
         return response.data;
     },
-    
+
     /**
      * Generează URL pentru descărcarea unui fișier rezultat
      */

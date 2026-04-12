@@ -124,7 +124,9 @@ def load_models():
 
     logger.info("Încărcare checkpoint GAN v3...")
     gan_checkpoint = torch.load(GAN_V3_PATH, map_location=device, weights_only=False)
-    gan_state_dict = gan_checkpoint.get("model_state_dict", gan_checkpoint)
+    # gan_state_dict = gan_checkpoint.get("model_state_dict", gan_checkpoint)
+    gan_state_dict = gan_checkpoint.get("generator_state_dict", 
+                 gan_checkpoint.get("model_state_dict", gan_checkpoint))
 
     # Creează o instanță a rețelei (inițializată random, o suprascriem imediat)
     model = DualBranchSARNet(**MODEL_CONFIG).to(device)

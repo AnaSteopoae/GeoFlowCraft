@@ -158,10 +158,15 @@ backend/data_geoserver/
 *.SAFE/
 **/*.SAFE/
 shared-data/**/*.SAFE/
+shared-data/*.tif
+shared-data/*.tiff
 
 # AI processing outputs
 service.ai-ch-processor/output/*.tif
 service.ai-ch-processor/output/*.tiff
+service.ai-sr-processor/output/*.tif
+service.ai-sr-processor/output/*.tiff
+service.ai-sr-processor/output/*.xml
 
 # GeoServer data layers
 backend/data_geoserver/data/*.tif

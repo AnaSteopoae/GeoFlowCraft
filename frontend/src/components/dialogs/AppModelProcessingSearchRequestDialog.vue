@@ -27,6 +27,32 @@
                 </div>
             </div>
 
+            <!-- SR Mode Selection (apare doar când SR e selectat) -->
+            <div v-if="isSRSelected" class="flex flex-col gap-1">
+                <div class="w-full pl-3 text-start text-gray-400">Super Resolution Mode</div>
+                <PrimeSelect 
+                    v-model="selectedSRMode" 
+                    :options="srModeOptions" 
+                    optionLabel="name" 
+                    optionValue="id"
+                    placeholder="Choose SR mode"
+                    :disabled="isLoading"
+                    fluid
+                >
+                    <template #option="slotProps">
+                        <div class="flex flex-col">
+                            <div class="font-semibold">{{ slotProps.option.name }}</div>
+                            <div class="text-xs text-gray-400">{{ slotProps.option.description }}</div>
+                        </div>
+                    </template>
+                </PrimeSelect>
+                <!-- SR Mode description -->
+                <div v-if="selectedSRModeInfo" class="pl-3 text-xs text-gray-400 mt-1">
+                    <div><strong>Alpha:</strong> {{ selectedSRModeInfo.alpha }}</div>
+                    <div>{{ selectedSRModeInfo.description }}</div>
+                </div>
+            </div>
+
             <!-- Date range input -->
             <div class="flex flex-col gap-1">
                 <div class="w-full pl-3 text-start text-gray-400">Select the time interval</div>
@@ -63,7 +89,8 @@ export default {
     data() {
         return { 
             isLoading: false,
-            selectedAIModel: null
+            selectedAIModel: null,
+            selectedSRMode: 'balanced'
         }
     },
     computed: {
@@ -76,13 +103,50 @@ export default {
         selectedAgentInfo() {
             if (!this.selectedAIModel) return null;
             return this.aiAgentStore.availableAgents.find(agent => agent.id === this.selectedAIModel);
+        },
+
+        /**
+         * Verifică dacă SR e selectat
+         */
+        isSRSelected() {
+            return this.selectedAIModel === 'sr-processor';
+        },
+
+        /**
+         * Opțiunile pentru dropdown-ul de mod SR
+         */
+        srModeOptions() {
+            return this.aiAgentStore.srPresetOptions;
+        },
+
+        /**
+         * Info despre modul SR selectat
+         */
+        selectedSRModeInfo() {
+            if (!this.selectedSRMode) return null;
+            return this.srModeOptions.find(m => m.id === this.selectedSRMode);
+        }
+    },
+    watch: {
+        /**
+         * Când utilizatorul schimbă agentul, încarcă modurile SR dacă e cazul
+         */
+        selectedAIModel(newVal) {
+            if (newVal === 'sr-processor') {
+                this.aiAgentStore.loadSRModes();
+            }
+        },
+
+        /**
+         * Sincronizează modul SR selectat cu store-ul
+         */
+        selectedSRMode(newVal) {
+            this.aiAgentStore.setSRMode(newVal);
         }
     },
     async mounted() {
-        // Încarcă agenții AI când se deschide dialogul
         await this.aiAgentStore.loadAvailableAgents();
         
-        // Setează primul agent ca selectat by default
         if (this.aiAgentStore.availableAgents.length > 0) {
             this.selectedAIModel = this.aiAgentStore.availableAgents[0].id;
         }
@@ -95,7 +159,6 @@ export default {
         async confirm() { 
             this.isLoading = true;
 
-            // Validare
             if (!this.selectedAIModel) {
                 this.$toast.add({ 
                     severity: "warn", 
@@ -119,8 +182,11 @@ export default {
                 return;
             }
 
-            // Salvează modelul selectat în store pentru a-l folosi mai târziu
+            // Salvează modelul și modul SR selectat în store
             this.aiAgentStore.setSelectedAgent(this.selectedAIModel);
+            if (this.isSRSelected) {
+                this.aiAgentStore.setSRMode(this.selectedSRMode);
+            }
 
             // Send search request
             const copernicusStore = useCopernicusStore();
@@ -130,13 +196,10 @@ export default {
                 this.modelProcessingSearchRequestDialog.requestInfo.selectedDates[1]
             );
             
-            // Display available data
             if(searchResponse.status == "success") {
                 if(searchResponse.items?.length > 0) {
                     const dialogStore = useDialogStore();
-                    // Display results dialog
                     dialogStore.showModelProcessingSearchResultsDialog();
-                    // Hide search dialog
                     this.close();
                 } else {
                     this.$toast.add({ 

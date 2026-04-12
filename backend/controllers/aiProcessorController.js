@@ -167,3 +167,19 @@ exports.processSentinel2Images = async (req, res) => {
         handleError(res, error);
     }
 };
+
+/**
+ * Obține modurile SR disponibile (fidelity, balanced, sharp + slider alpha)
+ * Frontend-ul apelează acest endpoint pentru a popula selectorul de mod
+ */
+exports.getSRModes = async (req, res) => {
+    try {
+        const modes = await aiProcessorService.getSRModes();
+        res.status(200).json({
+            success: true,
+            modes: modes
+        });
+    } catch (error) {
+        handleError(res, error);
+    }
+};

@@ -11,6 +11,23 @@ module.exports = {
             inputFormat: 'sentinel2-safe',
             outputFormat: 'geotiff'
         },
+                'sr-processor': {
+            name: 'Super Resolution Processor',
+            description: 'Super-rezoluție Sentinel-2 (10m → 2.5m) cu fuziune SAR-optică. '
+                       + 'Moduri: fidelity (PSNR maxim), balanced, sharp (margini ascuțite).',
+            url: 'http://localhost:5557',
+            endpoints: {
+                predict: '/predict/',
+                health: '/health',
+                modes: '/modes'
+            },
+            inputFormat: 'sentinel2-s1-stack',
+            outputFormat: 'geotiff',
+            // Serviciul Copernicus — pentru descărcarea S1
+            copernicusUrl: 'http://localhost:8000',
+            // Moduri disponibile (populat dinamic via /modes)
+            defaultMode: 'balanced'
+        }
         // Template pentru viitori agenți
         // 'model-2': {
         //     name: 'Model Name 2',

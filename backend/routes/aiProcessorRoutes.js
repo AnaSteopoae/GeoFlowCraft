@@ -8,6 +8,9 @@ router.get('/agents', aiProcessorController.getAvailableAgents);
 // Verifică disponibilitatea unui agent
 router.get('/agents/:agentId/health', aiProcessorController.checkAgentHealth);
 
+// Obține modurile SR disponibile (fidelity, balanced, sharp + alpha slider)
+router.get('/agents/sr-processor/modes', aiProcessorController.getSRModes);
+
 // Procesează date cu un agent specific
 router.post('/agents/:agentId/process', aiProcessorController.processWithAgent);
 
