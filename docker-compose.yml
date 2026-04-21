@@ -83,6 +83,25 @@ services:
   #   networks:
   #     - geoflowcraft-network
 
+  mongodb:
+      image: mongo:7
+      container_name: geoflowcraft-mongodb
+      ports:
+        - "27017:27017"
+      environment:
+        - MONGO_INITDB_ROOT_USERNAME=admin
+        - MONGO_INITDB_ROOT_PASSWORD=admin
+      volumes:
+        - mongodb-data:/data/db
+      restart: unless-stopped
+      networks:
+        - geoflowcraft-network
+      healthcheck:
+        test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+        interval: 30s
+        timeout: 10s
+        retries: 3
+
 networks:
   geoflowcraft-network:
     driver: bridge
@@ -90,3 +109,4 @@ networks:
 volumes:
   shared-data:
   ai-output:
+  mongodb-data:
