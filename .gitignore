@@ -167,6 +167,9 @@ service.ai-ch-processor/output/*.tiff
 service.ai-sr-processor/output/*.tif
 service.ai-sr-processor/output/*.tiff
 service.ai-sr-processor/output/*.xml
+service.ai-sr-processor/output/change_detection_results/*.tif
+service.ai-sr-processor/output/change_detection_results/*.tiff
+service.ai-sr-processor/output/change_detection_results/*.xml
 
 # GeoServer data layers
 backend/data_geoserver/data/*.tif

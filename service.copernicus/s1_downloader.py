@@ -288,8 +288,20 @@ def coregister_s1_to_s2(s1_path: str, s2_path: str, output_path: str) -> bool:
     # Verificare: suficienți pixeli valizi
     with rasterio.open(output_path) as check:
         valid = np.sum(check.read() > 0)
-        logger.info(f"Co-registration: shape={check.shape}, pixeli valizi={valid:,}")
-        return valid > 1000
+        
+        # Threshold combinat: max(minim absolut, 50% acoperire)
+        total_expected = check.height * check.width * check.count  # 2 benzi
+        min_absolute = 500
+        min_relative = int(total_expected * 0.5)
+        min_valid = max(min_absolute, min_relative)
+        
+        coverage = valid / total_expected * 100 if total_expected > 0 else 0
+        logger.info(
+            f"Co-registration: shape={check.shape}, pixeli valizi={valid:,}/{total_expected:,} "
+            f"({coverage:.1f}%), threshold={min_valid:,}"
+        )
+        
+        return valid > min_valid
 
 
 def stack_s2_s1(s2_path: str, s1_coreg_path: str, output_path: str) -> str:

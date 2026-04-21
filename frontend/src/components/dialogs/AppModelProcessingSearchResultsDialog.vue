@@ -135,6 +135,14 @@ export default {
                     item.id.startsWith('S2A_MSIL1C_') || item.id.startsWith('S2B_MSIL1C_')
                 );
             }
+
+            // Change Detection: same filter as SR (S2 images)
+            if (selectedAgent.inputFormat === 'sr-temporal-pair') {
+                return this.areaItems.filter(item => 
+                    item.id.startsWith('S2A_MSIL2A_') || item.id.startsWith('S2B_MSIL2A_') ||
+                    item.id.startsWith('S2A_MSIL1C_') || item.id.startsWith('S2B_MSIL1C_')
+                );
+            }
             
             return this.areaItems;
         }
@@ -196,6 +204,7 @@ export default {
 
         async process() {
             const selectedItems = this.compatibleAreaItems.filter(item => item.selected);
+            const aiAgentStore = useAIAgentStore();
             
             if (selectedItems.length === 0) {
                 this.$toast.add({ 
@@ -207,7 +216,6 @@ export default {
                 return;
             }
 
-            const aiAgentStore = useAIAgentStore();
             if (!aiAgentStore.selectedAgent) {
                 this.$toast.add({ 
                     severity: "error", 
@@ -218,6 +226,22 @@ export default {
                 return;
             }
 
+            // Change Detection necesită exact 2 scene
+            if (aiAgentStore.selectedAgent === 'cd-processor') {
+                if (selectedItems.length !== 2) {
+                    this.$toast.add({ 
+                        severity: "warn", 
+                        summary: "WARNING", 
+                        detail: "Change Detection requires exactly 2 images from different dates!", 
+                        life: 5000
+                    });
+                    return;
+                }
+                await this.processChangeDetection(selectedItems);
+                return;
+            }
+
+            // Flow normal (SR, CHM)
             this.$toast.add({ 
                 severity: "info", 
                 summary: "Processing", 
@@ -371,6 +395,99 @@ export default {
             } catch (error) {
                 console.error(`Error processing image ${item.id}:`, error);
                 throw error;
+            }
+        },
+
+        /**
+         * Change Detection: descarcă 2 scene, aplică SR pe ambele, apoi CVA.
+         */
+        async processChangeDetection(selectedItems) {
+            try {
+                this.close();
+
+                // Sortează cronologic — T1 mai vechi, T2 mai recent
+                const sorted = [...selectedItems].sort((a, b) => 
+                    new Date(a.datetime) - new Date(b.datetime)
+                );
+                
+                const itemT1 = sorted[0];
+                const itemT2 = sorted[1];
+                
+                this.$toast.add({ 
+                    severity: "info", 
+                    summary: "Change Detection", 
+                    detail: `Step 1/3: Downloading 2 scenes...`, 
+                    life: 10000
+                });
+
+                const bbox = this.getBboxFromSearchArea();
+                const aiAgentStore = useAIAgentStore();
+                const copernicusStore = useCopernicusStore();
+
+                // Extrage data din ID-ul scenei
+                const extractDate = (item) => {
+                    const match = item.id.match(/(\d{8})T/);
+                    return match 
+                        ? `${match[1].substring(0,4)}-${match[1].substring(4,6)}-${match[1].substring(6,8)}`
+                        : item.datetime.substring(0, 10);
+                };
+
+                // Descarcă ambele scene S2
+                const dl1 = await copernicusStore.downloadImages([itemT1.stac_item]);
+                const dl2 = await copernicusStore.downloadImages([itemT2.stac_item]);
+                
+                // Polling — așteaptă descărcarea ambelor
+                const waitDownload = async (taskId, label) => {
+                    for (let i = 0; i < 60; i++) {
+                        await new Promise(r => setTimeout(r, 5000));
+                        const status = await copernicusStore.checkDownloadStatus(taskId);
+                        console.log(`Download ${label} status:`, status.status);
+                        if (status.status === 'completed') return status;
+                        if (status.status === 'failed') throw new Error(`Download ${label} failed`);
+                    }
+                    throw new Error(`Download ${label} timeout`);
+                };
+
+                const result1 = await waitDownload(dl1.task_id, 'T1');
+                const result2 = await waitDownload(dl2.task_id, 'T2');
+
+                const s2PathT1 = result1.files ? result1.files[0] : `${itemT1.id}/${itemT1.id}.zip`;
+                const s2PathT2 = result2.files ? result2.files[0] : `${itemT2.id}/${itemT2.id}.zip`;
+
+                this.$toast.add({ 
+                    severity: "info", 
+                    summary: "Change Detection", 
+                    detail: `Step 2/3: Applying SR on both scenes + detecting changes...`, 
+                    life: 30000
+                });
+
+                // Apelează CD cu ambele scene — backend-ul aplică SR + CVA
+                const result = await aiAgentStore.processWithSelectedAgent({
+                    scene_t1: { s2_path: s2PathT1, bbox: bbox, target_date: extractDate(itemT1) },
+                    scene_t2: { s2_path: s2PathT2, bbox: bbox, target_date: extractDate(itemT2) },
+                    mode: aiAgentStore.selectedSRMode || 'balanced',
+                    threshold_method: 'otsu'
+                });
+
+                console.log('Change Detection result:', result);
+                
+                const stats = result.data.statistics;
+                this.$toast.add({ 
+                    severity: "success", 
+                    summary: "Change Detection Complete", 
+                    detail: `Changes: ${stats.changed_area_ha} ha (${stats.change_percentage}%). ` +
+                            `Vegetation loss: ${stats.vegetation_loss_ha} ha, gain: ${stats.vegetation_gain_ha} ha`, 
+                    life: 15000
+                });
+
+            } catch (error) {
+                console.error('Change detection error:', error);
+                this.$toast.add({ 
+                    severity: "error", 
+                    summary: "ERROR", 
+                    detail: `Change detection failed: ${error.message}`, 
+                    life: 5000
+                });
             }
         },
         

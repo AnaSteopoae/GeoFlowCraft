@@ -12,6 +12,7 @@ from stac_search import STACSearch
 from downloader import Sentinel2Downloader
 from s1_downloader import download_s1_processed, coregister_s1_to_s2, stack_s2_s1
 from s2_preprocessor import preprocess_s2_safe
+from change_detection import run_change_detection, run_chm_change_detection
 
 # Load environment variables from .env file
 load_dotenv()
@@ -299,6 +300,91 @@ async def preprocess_s2(request: S2PreprocessRequest):
         logger.error(f"S2 preprocess error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+class ChangeDetectionRequest(BaseModel):
+    """Request pentru change detection pe două imagini SR."""
+    sr_t1_path: str                          # GeoTIFF SR la momentul T1
+    sr_t2_path: str                          # GeoTIFF SR la momentul T2
+    threshold_method: Optional[str] = "otsu" # "otsu" sau "percentile"
+
+
+@app.post("/change-detection")
+async def change_detection(request: ChangeDetectionRequest):
+    """
+    Detecție schimbări între două imagini SR.
+
+    Calculează:
+    - CVA magnitude (cât s-a schimbat fiecare pixel)
+    - ΔNDVI (schimbare vegetație)
+    - Mască binară de schimbare
+    - Statistici (suprafață afectată, pierdere/creștere vegetație)
+
+    Input: două GeoTIFF-uri SR (4 benzi fiecare)
+    Output: GeoTIFF-uri cu rezultate + statistici JSON
+    """
+    try:
+        # Directorul de output — lângă fișierele SR
+        output_dir = os.path.join(
+            os.path.dirname(request.sr_t1_path),
+            "change_detection_results"
+        )
+
+        result = run_change_detection(
+            sr_t1_path=request.sr_t1_path,
+            sr_t2_path=request.sr_t2_path,
+            output_dir=output_dir,
+            threshold_method=request.threshold_method,
+        )
+
+        return {
+            "status": "completed",
+            "results": result,
+        }
+    except Exception as e:
+        logger.error(f"Change detection error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class CHMChangeDetectionRequest(BaseModel):
+    """Request pentru detecție defrișări prin ΔCHM."""
+    chm_t1_path: str                            # GeoTIFF CHM la momentul T1
+    chm_t2_path: str                            # GeoTIFF CHM la momentul T2
+    height_threshold: Optional[float] = 5.0     # Prag minim schimbare în metri
+
+
+@app.post("/change-detection/chm")
+async def chm_change_detection(request: CHMChangeDetectionRequest):
+    """
+    Detecție defrișări prin diferența de înălțime a canopiei (ΔCHM).
+    
+    Mai robust decât ΔNDVI pentru defrișări:
+    - Nu e afectat de sezonalitate
+    - Măsoară direct pierderea fizică de arbori
+    
+    Input: două GeoTIFF-uri CHM (1 bandă, înălțime în metri)
+    Output: ΔCHM map, mască defrișare/regenerare, statistici
+    """
+    try:
+        output_dir = os.path.join(
+            os.path.dirname(request.chm_t1_path),
+            "chm_change_results"
+        )
+
+        result = run_chm_change_detection(
+            chm_t1_path=request.chm_t1_path,
+            chm_t2_path=request.chm_t2_path,
+            output_dir=output_dir,
+            height_threshold=request.height_threshold,
+        )
+
+        return {
+            "status": "completed",
+            "results": result,
+        }
+    except Exception as e:
+        logger.error(f"CHM change detection error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 # ──────────────────────────────────────────────
 # Background tasks
 # ──────────────────────────────────────────────
@@ -375,7 +461,7 @@ async def process_download(task_id: str, items: List):
 
         auth = CopernicusAuth()
         # token = auth.get_access_token()
-        token = auth.get_download_token()
+        token=auth.get_download_token()
 
         download_tasks[task_id]["message"] = f"Starting download..."
         download_tasks[task_id]["total_items"] = len(items)

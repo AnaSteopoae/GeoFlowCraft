@@ -61,6 +61,11 @@ class AIProcessorService {
             return await this.processWithSR(inputData);
         }
         
+        // Change Detection: aplică SR pe 2 scene, apoi compară
+        if (agentId === 'cd-processor') {
+            return await this.processWithCD(inputData);
+        }
+        
         // Flow generic (CHM și viitori agenți)
         try {
             const url = `${agent.url}${agent.endpoints.predict}`;
@@ -276,6 +281,89 @@ class AIProcessorService {
         };
     }
 
+    // ──────────────────────────────────────────────
+    // Change Detection — flow specific
+    // ──────────────────────────────────────────────
+
+    /**
+     * Flow complet Change Detection:
+     * 1. Aplică SR pe scena T1 (dacă nu e deja SR)
+     * 2. Aplică SR pe scena T2 (dacă nu e deja SR)
+     * 3. Apelează endpoint-ul /change-detection cu cele două SR outputs
+     * 4. Returnează rezultatele (magnitudine, ΔNDVI, mască, statistici)
+     *
+     * inputData:
+     *   - scene_t1: { s2_path, bbox, target_date } — scena mai veche
+     *   - scene_t2: { s2_path, bbox, target_date } — scena mai recentă
+     *   - mode: "fidelity" | "balanced" | "sharp" (default: "balanced")
+     *   - threshold_method: "otsu" | "percentile" (default: "otsu")
+     *
+     * SAU (dacă SR e deja aplicat):
+     *   - sr_t1_path: calea GeoTIFF SR T1
+     *   - sr_t2_path: calea GeoTIFF SR T2
+     *   - threshold_method: "otsu" | "percentile"
+     */
+    async processWithCD(inputData) {
+        const agent = aiConfig.aiAgents['cd-processor'];
+        const copernicusUrl = agent.copernicusUrl;
+
+        let { sr_t1_path, sr_t2_path, scene_t1, scene_t2, 
+              mode = 'balanced', threshold_method = 'otsu' } = inputData;
+
+        console.log(`[CD] Start change detection`);
+
+        // ── Dacă primim scene raw, aplică SR pe ambele ──
+        if (!sr_t1_path && scene_t1) {
+            console.log('[CD] Pas 1: Aplicare SR pe scena T1...');
+            const srResult1 = await this.processWithSR({
+                ...scene_t1,
+                mode: mode
+            });
+            sr_t1_path = srResult1.data.sr_output;
+            console.log(`[CD] SR T1 complet: ${sr_t1_path}`);
+        }
+
+        if (!sr_t2_path && scene_t2) {
+            console.log('[CD] Pas 2: Aplicare SR pe scena T2...');
+            const srResult2 = await this.processWithSR({
+                ...scene_t2,
+                mode: mode
+            });
+            sr_t2_path = srResult2.data.sr_output;
+            console.log(`[CD] SR T2 complet: ${sr_t2_path}`);
+        }
+
+        if (!sr_t1_path || !sr_t2_path) {
+            throw new Error('sr_t1_path și sr_t2_path sunt obligatorii (sau scene_t1 + scene_t2)');
+        }
+
+        // ── Apelează change detection ──
+        console.log(`[CD] Pas 3: CVA + ΔNDVI (metoda: ${threshold_method})...`);
+
+        const cdResponse = await axios.post(`${copernicusUrl}/change-detection`, {
+            sr_t1_path: sr_t1_path,
+            sr_t2_path: sr_t2_path,
+            threshold_method: threshold_method
+        }, { timeout: 120000 });
+
+        const result = cdResponse.data.results;
+        console.log(`[CD] Complet! Schimbări: ${result.statistics.changed_area_ha} ha (${result.statistics.change_percentage}%)`);
+
+        return {
+            success: true,
+            agentId: 'cd-processor',
+            agentName: agent.name,
+            data: {
+                magnitude_path: result.magnitude_path,
+                delta_ndvi_path: result.delta_ndvi_path,
+                change_mask_path: result.change_mask_path,
+                ndvi_t1_path: result.ndvi_t1_path,
+                ndvi_t2_path: result.ndvi_t2_path,
+                statistics: result.statistics
+            }
+        };
+    }
+
     /**
      * Obține modurile SR disponibile
      */
@@ -428,6 +516,17 @@ class AIProcessorService {
                     target_date: areaData.target_date,
                     mode: areaData.mode || 'balanced',
                     alpha: areaData.alpha
+                };
+
+            case 'sr-temporal-pair':
+                // Change Detection: două scene + parametri
+                return {
+                    scene_t1: areaData.scene_t1,
+                    scene_t2: areaData.scene_t2,
+                    sr_t1_path: areaData.sr_t1_path,
+                    sr_t2_path: areaData.sr_t2_path,
+                    mode: areaData.mode || 'balanced',
+                    threshold_method: areaData.threshold_method || 'otsu'
                 };
 
             default:
