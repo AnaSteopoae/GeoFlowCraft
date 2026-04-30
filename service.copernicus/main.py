@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 import logging
 import os
 import uuid
+import rasterio 
 from dotenv import load_dotenv
 from auth import CopernicusAuth
 from stac_search import STACSearch
@@ -383,6 +384,66 @@ async def chm_change_detection(request: CHMChangeDetectionRequest):
         }
     except Exception as e:
         logger.error(f"CHM change detection error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+    
+
+class ConvertRGBRequest(BaseModel):
+    """Request pentru conversie GeoTIFF float32 → RGB uint8."""
+    input_path: str   # GeoTIFF SR (4 benzi, float32)
+
+
+@app.post("/convert/rgb")
+async def convert_to_rgb(request: ConvertRGBRequest):
+    """
+    Convertește un GeoTIFF SR (4 benzi float32) în RGB uint8 (3 benzi).
+    Scalare cu percentile 2-98% — adaptivă per imagine (ca QGIS).
+    Output: fișier _rgb.tif lângă original.
+    """
+    try:
+        import numpy as np
+
+        input_path = request.input_path
+        output_path = input_path.replace('.tif', '_rgb.tif')
+
+        logger.info(f"Conversie RGB: {input_path}")
+
+        with rasterio.open(input_path) as src:
+            # Benzile: 1=Blue, 2=Green, 3=Red, 4=NIR
+            b = src.read(1).astype(np.float32)
+            g = src.read(2).astype(np.float32)
+            r = src.read(3).astype(np.float32)
+            profile = src.profile.copy()
+
+        def to_uint8(band, pmin=2, pmax=98):
+            valid = band[band > 0]
+            if len(valid) == 0:
+                return np.zeros_like(band, dtype=np.uint8)
+            lo = np.percentile(valid, pmin)
+            hi = np.percentile(valid, pmax)
+            scaled = np.clip((band - lo) / (hi - lo) * 255, 0, 255)
+            scaled[band == 0] = 0
+            return scaled.astype(np.uint8)
+
+        r8 = to_uint8(r)
+        g8 = to_uint8(g)
+        b8 = to_uint8(b)
+
+        profile.update(count=3, dtype='uint8', compress='lzw', nodata=0)
+        with rasterio.open(output_path, 'w', **profile) as dst:
+            dst.write(r8, 1)  # Red
+            dst.write(g8, 2)  # Green
+            dst.write(b8, 3)  # Blue
+
+        size_mb = os.path.getsize(output_path) / 1024 / 1024
+        logger.info(f"RGB conversie completă: {output_path} ({size_mb:.1f} MB)")
+
+        return {
+            "status": "completed",
+            "rgb_path": output_path,
+            "original_path": input_path
+        }
+    except Exception as e:
+        logger.error(f"RGB convert error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # ──────────────────────────────────────────────

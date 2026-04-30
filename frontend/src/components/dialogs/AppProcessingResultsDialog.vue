@@ -44,8 +44,8 @@
                     <Column field="type" header="Type" :sortable="true">
                         <template #body="slotProps">
                             <Tag 
-                                :value="slotProps.data.type === 'predictions' ? 'Canopy Height' : 'Uncertainty (Std Dev)'" 
-                                :severity="slotProps.data.type === 'predictions' ? 'success' : 'info'"
+                                :value="slotProps.data.type" 
+                                :severity="getTypeSeverity(slotProps.data.type)"
                             />
                         </template>
                     </Column>
@@ -329,6 +329,26 @@ export default {
             visible.value = false;
         };
 
+        const getTypeSeverity = (type) => {
+            const severities = {
+                'Canopy Height': 'success',
+                'Uncertainty (Std Dev)': 'info',
+                'SR Fidelity': 'warning',
+                'SR Balanced': 'warning', 
+                'SR Sharp': 'warning',
+                'SR Output': 'warning',
+                'CVA Magnitude': 'danger',
+                'Delta NDVI': 'danger',
+                'Change Mask': 'danger',
+                'CD Results Archive': 'contrast',
+                'Delta CHM': 'contrast',
+                'Deforestation Mask': 'danger',
+                'Regrowth Mask': 'success',
+                'Change Classification': 'info'
+            };
+            return severities[type] || 'secondary';
+        };
+
         return {
             visible,
             isLoading,
@@ -341,7 +361,8 @@ export default {
             formatFileSize,
             formatDate,
             formatDateTime,
-            close
+            close,
+            getTypeSeverity
         };
     }
 };

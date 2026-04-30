@@ -465,7 +465,7 @@ export default {
                 const result = await aiAgentStore.processWithSelectedAgent({
                     scene_t1: { s2_path: s2PathT1, bbox: bbox, target_date: extractDate(itemT1) },
                     scene_t2: { s2_path: s2PathT2, bbox: bbox, target_date: extractDate(itemT2) },
-                    mode: aiAgentStore.selectedSRMode || 'balanced',
+                    mode: 'fidelity',
                     threshold_method: 'otsu'
                 });
 

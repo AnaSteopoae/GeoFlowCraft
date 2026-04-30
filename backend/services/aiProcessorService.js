@@ -3,6 +3,8 @@ const fs = require('fs');
 const path = require('path');
 const FormData = require('form-data');
 const aiConfig = require('../config/aiProcessorConfig');
+const { autoPublishResult } = require('./autoPublishService');
+const archiver = require('archiver');
 
 class AIProcessorService {
     
@@ -79,12 +81,27 @@ class AIProcessorService {
                 timeout: aiConfig.requestTimeout
             });
             
-            return {
+            const result = {
                 success: true,
                 agentId: agentId,
                 agentName: agent.name,
                 data: response.data
             };
+
+            // Publicare automată CHM
+            if (agentId === 'ch-processor' && response.data?.output_path) {
+                const publishResult = await autoPublishResult({
+                    filePath: response.data.output_path,
+                    name: `CHM ${new Date().toISOString().substring(0, 10)}`,
+                    type: 'chm',
+                    description: 'Canopy Height Model'
+                });
+                if (publishResult.success) {
+                    console.log(`[CHM] Publicat pe hartă: ${publishResult.layerName}`);
+                }
+            }
+
+            return result;
             
         } catch (error) {
             console.error(`Eroare la procesarea cu agent ${agentId}:`, error.message);
@@ -177,6 +194,18 @@ class AIProcessorService {
         const srResult = await this.sendToSRService(stackedPath, mode, alpha);
         
         console.log(`[SR] Complet! Output: ${srResult.outputPath}`);
+
+         // Publicare automată pe hartă
+        const dateStr = target_date || new Date().toISOString().substring(0, 10);
+        const publishResult = await autoPublishResult({
+            filePath: srResult.outputPath,
+            name: `SR ${mode} ${dateStr}`,
+            type: 'sr',
+            description: `Super-rezoluție ${mode} (α=${srResult.alpha}) din ${dateStr}`
+        });
+        if (publishResult.success) {
+            console.log(`[SR] Publicat pe hartă: ${publishResult.layerName}`);
+        }
 
         return {
             success: true,
@@ -308,7 +337,7 @@ class AIProcessorService {
         const copernicusUrl = agent.copernicusUrl;
 
         let { sr_t1_path, sr_t2_path, scene_t1, scene_t2, 
-              mode = 'balanced', threshold_method = 'otsu' } = inputData;
+            mode = 'fidelity', threshold_method = 'otsu' } = inputData;
 
         console.log(`[CD] Start change detection`);
 
@@ -349,6 +378,16 @@ class AIProcessorService {
         const result = cdResponse.data.results;
         console.log(`[CD] Complet! Schimbări: ${result.statistics.changed_area_ha} ha (${result.statistics.change_percentage}%)`);
 
+        // Creează arhivă ZIP cu toate rezultatele
+        const resultsDir = path.dirname(result.magnitude_path);
+        const archiveName = `cd_sr_${new Date().toISOString().substring(0, 10)}_${Date.now()}`;
+        let archivePath = null;
+        try {
+            archivePath = await this._createResultsArchive(resultsDir, archiveName);
+        } catch (archiveErr) {
+            console.warn(`[CD] Nu am putut crea arhiva: ${archiveErr.message}`);
+        }
+
         return {
             success: true,
             agentId: 'cd-processor',
@@ -359,6 +398,7 @@ class AIProcessorService {
                 change_mask_path: result.change_mask_path,
                 ndvi_t1_path: result.ndvi_t1_path,
                 ndvi_t2_path: result.ndvi_t2_path,
+                archive_path: archivePath,
                 statistics: result.statistics
             }
         };
@@ -390,102 +430,191 @@ class AIProcessorService {
         });
     }
     
+
+    async _createResultsArchive(resultsDir, archiveName) {
+        return new Promise((resolve, reject) => {
+            const outputPath = path.join(path.dirname(resultsDir), `${archiveName}.zip`);
+            const output = fs.createWriteStream(outputPath);
+            const archive = archiver('zip', { zlib: { level: 6 } });
+
+            output.on('close', () => {
+                const sizeMB = (archive.pointer() / 1024 / 1024).toFixed(1);
+                console.log(`[CD] Arhivă creată: ${outputPath} (${sizeMB} MB)`);
+                resolve(outputPath);
+            });
+
+            archive.on('error', (err) => reject(err));
+            archive.pipe(output);
+
+            // Adaugă toate fișierele .tif din director
+            const files = fs.readdirSync(resultsDir).filter(f => f.endsWith('.tif'));
+            for (const file of files) {
+                archive.file(path.join(resultsDir, file), { name: file });
+            }
+
+            archive.finalize();
+        });
+    }
+
+
     /**
      * Listează rezultatele procesării pentru un produs specific
      */
-    async getProcessingResults(productId) {
-        const outputDir = path.join(__dirname, '../../service.ai-ch-processor/output');
-        
-        if (!fs.existsSync(outputDir)) {
-            return {
-                success: false,
-                message: 'Output directory not found',
-                results: []
-            };
-        }
-        
-        try {
-            const files = fs.readdirSync(outputDir);
-            const productFiles = files.filter(file => 
-                file.startsWith(productId) && file.endsWith('.tif')
-            );
-            
-            const results = productFiles.map(filename => {
-                const filePath = path.join(outputDir, filename);
-                const stats = fs.statSync(filePath);
-                
-                return {
-                    filename: filename,
-                    path: filePath,
-                    size: stats.size,
-                    type: filename.includes('predictions') ? 'predictions' : 'std',
-                    createdAt: stats.birthtime,
-                    modifiedAt: stats.mtime
-                };
-            });
-            
-            return {
-                success: true,
-                productId: productId,
-                count: results.length,
-                results: results
-            };
-        } catch (error) {
-            throw new Error(`Failed to list results: ${error.message}`);
-        }
+     _getOutputDirs() {
+        return [
+            {
+                dir: path.join(__dirname, '../../service.ai-ch-processor/output'),
+                service: 'chm',
+                typeDetector: (filename) => {
+                    if (filename.includes('predictions')) return 'Canopy Height';
+                    if (filename.includes('std')) return 'Uncertainty (Std Dev)';
+                    return 'CHM Output';
+                }
+            },
+            {
+                dir: path.join(__dirname, '../../service.ai-sr-processor/output'),
+                service: 'sr',
+                typeDetector: (filename) => {
+                    if (filename.includes('sr_fidelity')) return 'SR Fidelity';
+                    if (filename.includes('sr_balanced')) return 'SR Balanced';
+                    if (filename.includes('sr_sharp')) return 'SR Sharp';
+                    return 'SR Output';
+                }
+            },
+            {
+                dir: path.join(__dirname, '../../service.ai-sr-processor/output/change_detection_results'),
+                service: 'cd-sr',
+                typeDetector: (filename) => {
+                    if (filename.endsWith('.zip')) return 'CD Results Archive';
+                    if (filename.includes('cva_magnitude')) return 'CVA Magnitude';
+                    if (filename.includes('delta_ndvi')) return 'Delta NDVI';
+                    if (filename.includes('change_mask')) return 'Change Mask';
+                    if (filename.includes('ndvi_t1')) return 'NDVI T1';
+                    if (filename.includes('ndvi_t2')) return 'NDVI T2';
+                    return 'CD-SR Output';
+                }
+            },
+            {
+                dir: path.join(__dirname, '../../shared-data/chm_change_results'),
+                service: 'cd-chm',
+                typeDetector: (filename) => {
+                    if (filename.endsWith('.zip')) return 'CD Results Archive';
+                    if (filename.includes('delta_chm')) return 'Delta CHM';
+                    if (filename.includes('deforestation')) return 'Deforestation Mask';
+                    if (filename.includes('regrowth')) return 'Regrowth Mask';
+                    if (filename.includes('classification')) return 'Change Classification';
+                    return 'CD-CHM Output';
+                }
+            }
+        ];
     }
-    
-    /**
-     * Listează toate rezultatele disponibile
-     */
-    async getAllProcessingResults() {
-        const outputDir = path.join(__dirname, '../../service.ai-ch-processor/output');
-        
-        if (!fs.existsSync(outputDir)) {
-            return {
-                success: false,
-                message: 'Output directory not found',
-                results: []
-            };
-        }
-        
-        try {
-            const files = fs.readdirSync(outputDir);
-            const tifFiles = files.filter(file => file.endsWith('.tif'));
-            
-            const groupedResults = {};
-            
-            tifFiles.forEach(filename => {
-                const match = filename.match(/^(S2[AB]_MSIL[12][AC]_\d+T\d+_[^_]+_[^_]+_[^_]+_[^_]+)/);
-                if (match) {
-                    const productId = match[1];
-                    
-                    if (!groupedResults[productId]) {
-                        groupedResults[productId] = [];
-                    }
-                    
-                    const filePath = path.join(outputDir, filename);
+
+    async getProcessingResults(productId) {
+        const outputDirs = this._getOutputDirs();
+        const results = [];
+
+        for (const { dir, service, typeDetector } of outputDirs) {
+            if (!fs.existsSync(dir)) continue;
+
+            try {
+                const files = fs.readdirSync(dir);
+                const productFiles = files.filter(file =>
+                    (file.endsWith('.tif') || file.endsWith('.zip')) && file.includes(productId)
+                );
+
+                for (const filename of productFiles) {
+                    const filePath = path.join(dir, filename);
                     const stats = fs.statSync(filePath);
-                    
-                    groupedResults[productId].push({
+                    results.push({
                         filename: filename,
                         path: filePath,
                         size: stats.size,
-                        type: filename.includes('predictions') ? 'predictions' : 'std',
+                        type: typeDetector(filename),
+                        service: service,
                         createdAt: stats.birthtime,
                         modifiedAt: stats.mtime
                     });
                 }
-            });
-            
-            return {
-                success: true,
-                count: Object.keys(groupedResults).length,
-                results: groupedResults
-            };
-        } catch (error) {
-            throw new Error(`Failed to list all results: ${error.message}`);
+            } catch (error) {
+                console.warn(`Error scanning ${dir}: ${error.message}`);
+            }
         }
+
+        return {
+            success: true,
+            productId: productId,
+            count: results.length,
+            results: results
+        };
+    }
+
+    async getAllProcessingResults() {
+        const outputDirs = this._getOutputDirs();
+        const groupedResults = {};
+
+        for (const { dir, service, typeDetector } of outputDirs) {
+            if (!fs.existsSync(dir)) continue;
+
+            try {
+                const files = fs.readdirSync(dir);
+                const tifFiles = files.filter(file => file.endsWith('.tif') || file.endsWith('.zip'));
+
+                for (const filename of tifFiles) {
+                    let productId = null;
+
+                    const s2Match = filename.match(/(S2[AB]_MSIL[12][AC]_\d+T\d+_[^_]+_[^_]+_[^_]+_[^.]+)/);
+                    if (s2Match) {
+                        productId = s2Match[1];
+                    } else if (service === 'cd-sr' || service === 'cd-chm') {
+                        productId = `change_detection_${service}`;
+                    } else {
+                        productId = 'other';
+                    }
+
+                    if (!groupedResults[productId]) {
+                        groupedResults[productId] = [];
+                    }
+
+                    const filePath = path.join(dir, filename);
+                    const stats = fs.statSync(filePath);
+
+                    groupedResults[productId].push({
+                        filename: filename,
+                        path: filePath,
+                        size: stats.size,
+                        type: typeDetector(filename),
+                        service: service,
+                        createdAt: stats.birthtime,
+                        modifiedAt: stats.mtime
+                    });
+                }
+            } catch (error) {
+                console.warn(`Error scanning ${dir}: ${error.message}`);
+            }
+        }
+
+        return {
+            success: true,
+            count: Object.keys(groupedResults).length,
+            results: groupedResults
+        };
+    }
+
+      findResultFile(filename) {
+        const outputDirs = this._getOutputDirs();
+        for (const { dir } of outputDirs) {
+            // Caută în directorul specificat
+            const filePath = path.join(dir, filename);
+            if (fs.existsSync(filePath)) {
+                return filePath;
+            }
+            // Caută și un nivel deasupra (pentru arhive ZIP)
+            const parentPath = path.join(path.dirname(dir), filename);
+            if (fs.existsSync(parentPath)) {
+                return parentPath;
+            }
+        }
+        return null;
     }
     
     /**

@@ -112,35 +112,28 @@ exports.getAllProcessingResults = async (req, res) => {
 exports.downloadResult = async (req, res) => {
     try {
         const { filename } = req.params;
-        const outputDir = path.join(__dirname, '../../service.ai-ch-processor/output');
-        const filePath = path.join(outputDir, filename);
         
-        // Verifică dacă fișierul există
-        if (!fs.existsSync(filePath)) {
+        // Caută fișierul în toate directoarele de output
+        const filePath = aiProcessorService.findResultFile(filename);
+        
+        if (!filePath) {
             return res.status(404).json({
                 success: false,
-                message: 'File not found'
+                message: 'File not found in any output directory'
             });
         }
-        
-        // Verifică că este un fișier .tif
-        if (!filename.endsWith('.tif')) {
+
+        if (!filename.endsWith('.tif') && !filename.endsWith('.zip')) {
             return res.status(400).json({
                 success: false,
-                message: 'Invalid file type'
+                message: 'Invalid file type. Allowed: .tif, .zip'
             });
         }
         
-        // Setează headerele pentru download
-        res.setHeader('Content-Type', 'image/tiff');
-        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-        
-        // Trimite fișierul
-        const fileStream = fs.createReadStream(filePath);
-        fileStream.pipe(res);
-        
+        res.download(filePath, filename);
     } catch (error) {
-        handleError(res, error);
+        console.error('Download error:', error.message);
+        res.status(500).json({ success: false, message: error.message });
     }
 };
 

@@ -62,7 +62,6 @@ async function createDataLayer(request, response) {
             throw "DataLayer's 'content' should have at least one item";
         }
         
-        // for (const layerContentItem of layerContent) {
         let layerContentItem = layerContent[0];
 
         // 1. Extract file extension and content
@@ -74,7 +73,7 @@ async function createDataLayer(request, response) {
             case "x-zip-compressed/base64":
                 fileExtension = "zip";
                 break;
-                case "csv/base64":
+            case "csv/base64":
                 fileExtension = "csv";
                 break;
             default:
@@ -93,23 +92,18 @@ async function createDataLayer(request, response) {
         let layerName = `layer_${newDataLayerId}`;
         switch (fileExtension) {
             case "tiff":
-                // Upload file
                 geoServerPath = `${geoserverConfig.vmBaseRemotePath}/${filename}`;
                 console.log(`Uploading file ('${geoServerPath}') to GeoServer's filesystem...`);
                 await uploadFileToHost(geoserverConfig.ssh, localFilePath, geoServerPath);
                 break;
             case "zip":
-                // Unzip to directory
                 const unzipPath = `${serverConfig.baseUploadPath}/${filenameWithoutExtension}`;
-                // PS: 'extract-zip' requires absolute path
                 console.log(`Unziping file ('${localFilePath}') locally to ('${path.resolve(unzipPath)}')...`);
                 await extractZIP(localFilePath, { dir: path.resolve(unzipPath) });
 
-                // Rename all the files in the directory
                 console.log(`Rename files in the directory '${unzipPath}' to have base name as '${filenameWithoutExtension}'`);
                 renameAllFilesInDirectory(unzipPath, `layer_${filenameWithoutExtension}`);
 
-                // Detecting if we have a shapefile
                 console.log(`Searching for .shp file...`);
                 filename = findFirstShpFile(unzipPath);
                 if(filename) {
@@ -119,15 +113,12 @@ async function createDataLayer(request, response) {
                 const geoserverDirectoryPath = `${geoserverConfig.vmBaseRemotePath}/${filenameWithoutExtension}`;
                 geoServerPath = geoserverDirectoryPath;
                 console.log(`Uploading directory ('${geoserverDirectoryPath}') to GeoServer's filesystem...`);
-                // Upload directory
                 await uploadDirectoryToHost(geoserverConfig.ssh, unzipPath, geoserverDirectoryPath);
                 break;
             case "csv":
-                // Upload file
                 geoServerPath = `${geoserverConfig.vmBaseRemotePath}/${filename}`;
                 console.log(`Uploading file ('${geoServerPath}') to GeoServer's filesystem...`);
                 await uploadFileToHost(geoserverConfig.ssh, localFilePath, geoServerPath);
-                // Publish to postgres (postgis) DB
                 console.log(`Importing .csv to '${layerName}' postgres table...`);
                 await importCSVToPostGIS(
                     localFilePath, 
@@ -171,20 +162,91 @@ async function createDataLayer(request, response) {
             }
         }
 
+        // Declarate ÎNAINTE de switch — folosite în toate branch-urile
+        let layerFormat = null;
+        let layerSource = null;
         let payload = null;
+
         switch (storeType) {
             case "GeoTIFF":
-                storeCreateUrl = `${geoserverConfig.url}/rest/workspaces/${workspaceName}/coveragestores`;
-                payload = {
-                    coverageStore: {
-                        name: storeName,
-                        workspace: workspaceName,
-                        type: storeType,
-                        url: `file:${geoserverConfig.baseRemotePath}/${filename}`,
-                        enabled: true
-                    },
-                };
-                break;
+                // Binary upload — ocolește sandboxing-ul GeoServer
+                console.log(`Creating GeoServer store '${storeName}' via binary upload...`);
+                const tiffFilePath = `${serverConfig.baseUploadPath}/${filenameWithoutExtension}.tiff`;
+                const tiffData = fs.readFileSync(tiffFilePath);
+                await axios.put(
+                    `${geoserverConfig.url}/rest/workspaces/${workspaceName}/coveragestores/${storeName}/file.geotiff`,
+                    tiffData,
+                    {
+                        auth: geoserverConfig.auth,
+                        headers: { 'Content-Type': 'image/tiff' },
+                        maxContentLength: Infinity,
+                        maxBodyLength: Infinity
+                    }
+                );
+
+                // Detectează numărul de benzi și aplică stilul potrivit
+                try {
+                    const layerDetails = await axios.get(
+                        `${geoserverConfig.url}/rest/workspaces/${workspaceName}/coveragestores/${storeName}/coverages/${storeName}.json`,
+                        { auth: geoserverConfig.auth }
+                    );
+                    const numBands = layerDetails.data?.coverage?.dimensions?.coverageDimension?.length || 0;
+                    
+                    let styleName = 'raster';
+                    if (numBands >= 3) {
+                        styleName = 'sr_truecolor';
+                    } else if (numBands === 1) {
+                        styleName = 'canopy_height';
+                    }
+
+                    await axios.put(
+                        `${geoserverConfig.url}/rest/layers/${workspaceName}:${storeName}`,
+                        { layer: { defaultStyle: { name: styleName } } },
+                        {
+                            auth: geoserverConfig.auth,
+                            headers: { 'Content-Type': 'application/json' }
+                        }
+                    );
+                    console.log(`Applied style '${styleName}' (${numBands} bands) to layer ${storeName}`);
+                } catch (styleErr) {
+                    console.warn(`Could not apply style: ${styleErr.message}`);
+                }
+
+                // GeoServer creează automat store + layer la binary upload
+                layerName = storeName;
+                layerFormat = "image/png";
+                layerSource = "wms";
+
+                // Update DB și return direct
+                console.log(`Updating database DataLayer ('${dataLayerName}')...`);
+                await dataLayerService.updateDataLayer({
+                    id: newDataLayerId,
+                    name: dataLayerName,
+                    description: dataLayerDescription,
+                    geoserver: {
+                        url: geoserverConfig.url,
+                        workspace: { name: workspaceName },
+                        store: { name: storeName, type: storeType },
+                        layer: {
+                            name: layerName,
+                            format: { name: layerFormat },
+                            source: layerSource,
+                            params: null
+                        },
+                        files: [{ path: geoServerPath || localFilePath }]
+                    }
+                });
+
+                let createdDataLayer = await dataLayerService.getDataLayer(newDataLayerId);
+
+                let dSetId = requestBodyMetadata.dataSetId;
+                if(dSetId) {
+                    await dataSetService.addDataLayer(dSetId, newDataLayerId);
+                }
+
+                response.status(200).json({ success: true, dataLayer: createdDataLayer });
+                return;
+
             case "Shapefile":
                 storeCreateUrl = `${geoserverConfig.url}/rest/workspaces/${workspaceName}/datastores`;
                 payload = {
@@ -224,12 +286,12 @@ async function createDataLayer(request, response) {
                         }
                     }
                 };
-
                 break;
             default:
                 throw `Unknown store type: '${storeType}'`;
         }
 
+        // Pentru Shapefile și PostGIS — flow-ul vechi cu POST JSON
         console.log(`Creating GeoServer store '${storeName}'...`);
         await axios.post(
             storeCreateUrl, 
@@ -240,25 +302,9 @@ async function createDataLayer(request, response) {
             }
         );
 
-        // 6. Create layer
-        let layerFormat = null;
-        let layerSource = null;
+        // 6. Create layer (doar pentru Shapefile și PostGIS — GeoTIFF face return mai sus)
         console.log(`Creating layer '${layerName}'...`)
         switch (storeType) {
-            case "GeoTIFF":
-                layerFormat = "image/png"
-                layerSource = "wms";
-                await layerService.createLayer({
-                    workspaceName: workspaceName,
-                    store: {
-                        name: storeName,
-                        type: "coverage"
-                    },
-                    layer: {
-                        name: layerName
-                    }
-                });
-                break;
             case "Shapefile":
                 layerFormat = "image/png"
                 layerSource = "wms";
@@ -356,7 +402,7 @@ async function createDataLayer(request, response) {
                         name: layerFormat
                     },
                     source: layerSource,
-                    params: null // TODO
+                    params: null
                 },
                 files: [
                     {
@@ -374,8 +420,6 @@ async function createDataLayer(request, response) {
             console.log(`Adding DataLayer ('${newDataLayerId}') to DataSet ('${dataSetId}')...`);
             await dataSetService.addDataLayer(dataSetId, newDataLayerId)
         }
-        // fileIndex++;
-        // }
     
         response.status(200).json({ success: true, dataLayer: newCreatedDataLayer });
     } catch (error) {
@@ -400,7 +444,6 @@ async function deleteDataLayer(request, response) {
         let dataSets = await dataSetService.getDataSets({ layerId: dataLayerId });
         console.log(`Removing DataLayer from DataSets...`);
 
-        // Remove the layer from all datasets
         if(dataSets?.length > 0) {
             for (const dataSet of dataSets) {
                 console.log(`Removing DataLayer ${dataLayerId} from DataSet ${dataSet.id}...`);
@@ -412,7 +455,6 @@ async function deleteDataLayer(request, response) {
 
         if(!dataLayer) return;
 
-        // Delete the layer files
         try {            
             console.log("Deleting DataLayerFiles...")
             console.log(dataLayer.geoserver?.files);
@@ -426,7 +468,6 @@ async function deleteDataLayer(request, response) {
             console.log(error);
         }
 
-        // Delete the layer from geoserver
         try {
             console.log(`Deleting DataLayer from GeoServer: ${dataLayer.geoserver?.layer?.name}`);
             await layerService.deleteLayer({
@@ -437,7 +478,6 @@ async function deleteDataLayer(request, response) {
             console.log(error);
         }
 
-        // Delete the layer's store from geoserver
         console.log(`Deleting DataLayer's store from GeoServer: ${dataLayer.geoserver.store.name}`);
         let storeType = null;
         switch(dataLayer.geoserver.store.type){
@@ -456,11 +496,7 @@ async function deleteDataLayer(request, response) {
         } catch (error) {
             console.log(error)
         }
-        
-        // Delete the layer's table from postgis
-        // TODO
 
-        // Delete the layer from database
         console.log(`Deleting DataLayer from database: ${dataLayerId}`);
         await dataLayerService.deleteDataLayer({ id: dataLayerId });
 
@@ -494,10 +530,8 @@ async function importCSVToPostGIS(csvFilePath, tableName, srs, latColumn, lonCol
 
         queryCreateTable += `);`;
 
-        // Create table
         await client.query(queryCreateTable);
 
-        // Read CSV and insert data
         const stream = fs.createReadStream(csvFilePath)
             .pipe((await import('strip-bom-stream')).default())
             .pipe(csv())
@@ -513,7 +547,6 @@ async function importCSVToPostGIS(csvFilePath, tableName, srs, latColumn, lonCol
 
                 let queryInsertColumns = `INSERT INTO ${tableName} (geom, lat, lon`;
                 let queryInsertValues = `VALUES (ST_SetSRID(ST_MakePoint($2, $1), ${srs.split(":")[1] ?? '4326'}), $1, $2`;
-                // let queryInsertValues = `VALUES(ST_GeomFromText('POINT(${lon} ${lat})', 4326), $1, $2`;
 
                 let columnIndex = 3;
                 if(otherColumns?.length > 0) {
@@ -526,15 +559,12 @@ async function importCSVToPostGIS(csvFilePath, tableName, srs, latColumn, lonCol
                 queryInsertColumns += `)`;
                 queryInsertValues += `)`;
                 queryInsert = `${queryInsertColumns} ${queryInsertValues}`;
-                // console.log(queryInsert)
-                // console.log(values);
 
                 await client.query(queryInsert, values);
             });
 
         await new Promise((resolve) => stream.on('end', resolve));
 
-        // Create spatial index
         await client.query(`
             CREATE INDEX idx_${tableName}_geom ON ${tableName} USING GIST(geom);
         `);
@@ -545,17 +575,12 @@ async function importCSVToPostGIS(csvFilePath, tableName, srs, latColumn, lonCol
     }
 }
 
-// Helper function to upload file to a host using ssh
 async function uploadFileToHost(hostConfig, localFilePath, remoteFilePath) {
-    // For localhost/Docker: use direct file copy instead of SSH
     if (hostConfig.host === 'localhost' || hostConfig.host === '127.0.0.1') {
         try {
-            // Convert container path to host path
-            // /opt/geoserver/data_dir/... -> backend/data_geoserver/...
             const hostPath = remoteFilePath.replace('/opt/geoserver/data_dir', 
                 path.join(__dirname, '../data_geoserver'));
             
-            // Ensure directory exists
             const dir = path.dirname(hostPath);
             if (!fs.existsSync(dir)) {
                 fs.mkdirSync(dir, { recursive: true });
@@ -570,7 +595,6 @@ async function uploadFileToHost(hostConfig, localFilePath, remoteFilePath) {
         }
     }
     
-    // For remote hosts: use SSH
     const sshClient = new NodeSSH();
     try {
         await sshClient.connect(hostConfig);
@@ -587,20 +611,16 @@ async function uploadFileToHost(hostConfig, localFilePath, remoteFilePath) {
 }
 
 async function uploadDirectoryToHost(hostConfig, localDirPath, remoteDirPath) {
-    // For localhost/Docker: use direct directory copy instead of SSH
     if (hostConfig.host === 'localhost' || hostConfig.host === '127.0.0.1') {
         try {
-            // Convert container path to host path
             const hostPath = remoteDirPath.replace('/opt/geoserver/data_dir', 
                 path.join(__dirname, '../data_geoserver'));
             
-            // Ensure parent directory exists
             const parentDir = path.dirname(hostPath);
             if (!fs.existsSync(parentDir)) {
                 fs.mkdirSync(parentDir, { recursive: true });
             }
             
-            // Copy directory recursively
             copyDirectoryRecursive(localDirPath, hostPath);
             console.log(`Directory copied locally to: ${hostPath}`);
             return;
@@ -610,7 +630,6 @@ async function uploadDirectoryToHost(hostConfig, localDirPath, remoteDirPath) {
         }
     }
     
-    // For remote hosts: use SSH
     const sshClient = new NodeSSH();
     try {
         await sshClient.connect(hostConfig);
@@ -618,7 +637,7 @@ async function uploadDirectoryToHost(hostConfig, localDirPath, remoteDirPath) {
 
         await sshClient.putDirectory(localDirPath, remoteDirPath, {
             recursive: true,
-            concurrency: 5, // Adjust concurrency based on performance needs
+            concurrency: 5,
         });
 
         console.log(`Directory uploaded to host server '${hostConfig.host}':`, remoteDirPath);
@@ -630,7 +649,6 @@ async function uploadDirectoryToHost(hostConfig, localDirPath, remoteDirPath) {
     }
 }
 
-// Helper function to copy directory recursively
 function copyDirectoryRecursive(source, destination) {
     if (!fs.existsSync(destination)) {
         fs.mkdirSync(destination, { recursive: true });
@@ -651,10 +669,8 @@ function copyDirectoryRecursive(source, destination) {
 }
 
 async function deleteFileOnHost(hostConfig, remoteFilePath) {
-    // For localhost/Docker: use direct file deletion instead of SSH
     if (hostConfig.host === 'localhost' || hostConfig.host === '127.0.0.1') {
         try {
-            // Convert container path to host path
             const hostPath = remoteFilePath.replace('/opt/geoserver/data_dir', 
                 path.join(__dirname, '../data_geoserver'));
             
@@ -673,7 +689,6 @@ async function deleteFileOnHost(hostConfig, remoteFilePath) {
         }
     }
     
-    // For remote hosts: use SSH
     const sshClient = new NodeSSH();
     try {
         await sshClient.connect(hostConfig);
@@ -704,13 +719,6 @@ function findFirstShpFile(directory) {
     }
 }
 
-/**
- * Renames a file
- * @param {string} oldPath - Current file path
- * @param {string} newName - New filename (with or without extension)
- * @param {boolean} [keepExtension=true] - Whether to preserve original extension
- * @returns {Promise<string>} New file path
- */
 async function renameFile(oldPath, newName, keepExtension = true) {
     try {
         const dir = path.dirname(oldPath);
@@ -718,7 +726,6 @@ async function renameFile(oldPath, newName, keepExtension = true) {
         
         if (keepExtension) {
             const ext = path.extname(oldPath);
-            // Remove any extension the user might have provided
             finalName = path.basename(newName, path.extname(newName)) + ext;
         }
         
@@ -731,27 +738,18 @@ async function renameFile(oldPath, newName, keepExtension = true) {
     }
 }
 
-/**
- * Synchronously renames all files in a directory to a new base name while keeping extensions
- * @param {string} directory - Path to the directory
- * @param {string} newBaseName - New base name for all files
- * @returns {Array} Array of objects containing {oldName, newName} for each renamed file
- */
 function renameAllFilesInDirectory(directory, newBaseName) {
     const results = [];
     
     try {
-        // Get all files in directory
         const files = fs.readdirSync(directory);
         
-        // Counter for multiple files with same extension
         let counter = 1;
         const usedExtensions = new Set();
         
         files.forEach(file => {
             const oldPath = path.join(directory, file);
             
-            // Skip directories
             if (fs.statSync(oldPath).isDirectory()) {
                 return;
             }
@@ -759,14 +757,12 @@ function renameAllFilesInDirectory(directory, newBaseName) {
             const ext = path.extname(file);
             let finalNewName = newBaseName;
             
-            // Handle duplicate extensions by adding a number
             if (usedExtensions.has(ext)) {
                 finalNewName = `${newBaseName}_${counter++}`;
             } else {
                 usedExtensions.add(ext);
             }
             
-            // Add original extension
             finalNewName += ext;
             
             const newPath = path.join(directory, finalNewName);

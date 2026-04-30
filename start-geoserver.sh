@@ -60,6 +60,7 @@ else
         -e CORS_ALLOWED_ORIGINS="*" \
         -e CORS_ALLOWED_METHODS="GET,POST,PUT,DELETE,HEAD,OPTIONS" \
         -e CORS_ALLOWED_HEADERS="*" \
+        -e GEOSERVER_SANDBOX_ENABLED=false \
         kartoza/geoserver
     
     echo ""
