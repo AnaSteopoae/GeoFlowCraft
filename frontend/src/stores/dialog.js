@@ -20,7 +20,8 @@ export default defineStore('dialog', {
         },
         confirmDialogVisible: false,
         confirmDialogInfo: null,
-        confirmDialogIsLoading: false
+        confirmDialogIsLoading: false,
+        taskSelectorVisible: false
     }),
     actions: {
         // DataSetCreateDialog
@@ -78,6 +79,12 @@ export default defineStore('dialog', {
         hideConfirmDialog() {
             this.confirmDialogVisible = false;
             this.confirmDialogInfo = null;
+        },
+        showTaskSelector() {
+            this.taskSelectorVisible = true;
+        },
+        hideTaskSelector() {
+            this.taskSelectorVisible = false;
         },
     }
 })

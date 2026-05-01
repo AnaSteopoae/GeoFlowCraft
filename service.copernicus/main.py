@@ -445,6 +445,87 @@ async def convert_to_rgb(request: ConvertRGBRequest):
     except Exception as e:
         logger.error(f"RGB convert error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+    
+
+class CheckS1Request(BaseModel):
+    """Verifică disponibilitatea S1 pentru o dată și zonă."""
+    bbox: list
+    target_date: str
+    days_tolerance: int = 6
+
+
+@app.post("/check/s1")
+async def check_s1_availability(request: CheckS1Request):
+    """
+    Verifică rapid dacă există date Sentinel-1 GRD disponibile
+    pentru bbox-ul și data specificate, fără a descărca nimic.
+    """
+    try:
+        from datetime import datetime, timedelta
+
+        target = datetime.strptime(request.target_date, "%Y-%m-%d")
+        start = (target - timedelta(days=request.days_tolerance)).strftime("%Y-%m-%dT00:00:00")
+        end = (target + timedelta(days=request.days_tolerance)).strftime("%Y-%m-%dT23:59:59")
+
+        bbox = request.bbox
+        # Sentinel Hub catalog search for S1 GRD
+        catalog_url = "https://sh.dataspace.copernicus.eu/api/v1/catalog/1.0.0/search"
+
+        search_body = {
+            "bbox": bbox,
+            "datetime": f"{start}/{end}",
+            "collections": ["sentinel-1-grd"],
+            "limit": 5
+        }
+
+        # Get SH token
+        token_response = requests.post(
+            "https://identity.dataspace.copernicus.eu/auth/realms/CDSE/protocol/openid-connect/token",
+            data={
+                "grant_type": "client_credentials",
+                "client_id": os.environ.get("SH_CLIENT_ID"),
+                "client_secret": os.environ.get("SH_CLIENT_SECRET")
+            }
+        )
+        sh_token = token_response.json().get("access_token")
+
+        response = requests.post(
+            catalog_url,
+            json=search_body,
+            headers={
+                "Authorization": f"Bearer {sh_token}",
+                "Content-Type": "application/json"
+            }
+        )
+
+        if response.status_code != 200:
+            logger.warning(f"S1 check failed: {response.status_code}")
+            return {"available": True, "message": "Could not verify, proceeding anyway"}
+
+        results = response.json()
+        features = results.get("features", [])
+
+        if len(features) > 0:
+            dates = [f["properties"]["datetime"][:10] for f in features]
+            logger.info(f"S1 available: {len(features)} scenes found ({', '.join(dates)})")
+            return {
+                "available": True,
+                "count": len(features),
+                "dates": dates,
+                "message": f"{len(features)} S1 scene(s) found within ±{request.days_tolerance} days"
+            }
+        else:
+            logger.info(f"S1 NOT available for {request.target_date} ±{request.days_tolerance} days")
+            return {
+                "available": False,
+                "count": 0,
+                "dates": [],
+                "message": f"No Sentinel-1 data found within ±{request.days_tolerance} days of {request.target_date}"
+            }
+
+    except Exception as e:
+        logger.error(f"S1 check error: {str(e)}")
+        return {"available": True, "message": f"Check failed: {str(e)}, proceeding anyway"}
 
 # ──────────────────────────────────────────────
 # Background tasks

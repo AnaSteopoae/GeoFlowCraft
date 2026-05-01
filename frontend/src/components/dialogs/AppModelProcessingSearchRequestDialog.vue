@@ -1,55 +1,12 @@
 <template>
-    <PrimeDialog v-model:visible="modelProcessingSearchRequestDialog.visible" modal header="Search available data for the selected area" :closable="false">
+    <PrimeDialog v-model:visible="modelProcessingSearchRequestDialog.visible" modal header="Select time period" :closable="false">
         <div class="my-2 mb-6 flex flex-col gap-4">
-            <!-- AI Model Selection -->
-            <div class="flex flex-col gap-1">
-                <div class="w-full pl-3 text-start text-gray-400">Select AI Model</div>
-                <PrimeSelect 
-                    v-model="selectedAIModel" 
-                    :options="aiAgentStore.availableAgents" 
-                    optionLabel="name" 
-                    optionValue="id"
-                    placeholder="Choose an AI model"
-                    :disabled="isLoading || aiAgentStore.isLoading"
-                    fluid
-                >
-                    <template #option="slotProps">
-                        <div class="flex flex-col">
-                            <div class="font-semibold">{{ slotProps.option.name }}</div>
-                            <div class="text-xs text-gray-400">{{ slotProps.option.description }}</div>
-                        </div>
-                    </template>
-                </PrimeSelect>
-                <!-- Agent Info -->
-                <div v-if="selectedAgentInfo" class="pl-3 text-xs text-gray-400 mt-1">
-                    <div><strong>Input:</strong> {{ selectedAgentInfo.inputFormat }}</div>
-                    <div><strong>Output:</strong> {{ selectedAgentInfo.outputFormat }}</div>
-                </div>
-            </div>
-
-            <!-- SR Mode Selection (apare doar când SR e selectat) -->
-            <div v-if="isSRSelected" class="flex flex-col gap-1">
-                <div class="w-full pl-3 text-start text-gray-400">Super Resolution Mode</div>
-                <PrimeSelect 
-                    v-model="selectedSRMode" 
-                    :options="srModeOptions" 
-                    optionLabel="name" 
-                    optionValue="id"
-                    placeholder="Choose SR mode"
-                    :disabled="isLoading"
-                    fluid
-                >
-                    <template #option="slotProps">
-                        <div class="flex flex-col">
-                            <div class="font-semibold">{{ slotProps.option.name }}</div>
-                            <div class="text-xs text-gray-400">{{ slotProps.option.description }}</div>
-                        </div>
-                    </template>
-                </PrimeSelect>
-                <!-- SR Mode description -->
-                <div v-if="selectedSRModeInfo" class="pl-3 text-xs text-gray-400 mt-1">
-                    <div><strong>Alpha:</strong> {{ selectedSRModeInfo.alpha }}</div>
-                    <div>{{ selectedSRModeInfo.description }}</div>
+            <!-- Selected task info -->
+            <div class="flex items-center gap-3 p-3 rounded-lg" style="background: rgba(20, 184, 166, 0.1); border: 1px solid rgba(20, 184, 166, 0.3);">
+                <i :class="taskIcon" style="font-size: 1.5rem; color: rgb(20 184 166);"></i>
+                <div>
+                    <div class="font-semibold text-sm" style="color: #f1f5f9;">{{ taskLabel }}</div>
+                    <div class="text-xs" style="color: #94a3b8;">{{ taskDescription }}</div>
                 </div>
             </div>
 
@@ -57,20 +14,29 @@
             <div class="flex flex-col gap-1">
                 <div class="w-full pl-3 text-start text-gray-400">Select the time interval</div>
                 <PrimeDatePicker 
-                    v-model="modelProcessingSearchRequestDialog.requestInfo.selectedDates" :disabled="isLoading" 
-                    selectionMode="range" showIcon fluid 
+                    ref="datePicker"
+                    v-model="modelProcessingSearchRequestDialog.requestInfo.selectedDates" 
+                    :disabled="isLoading" 
+                    selectionMode="range" 
+                    showIcon 
+                    fluid 
+                    @date-select="onDateSelect"
                 />
+                <div class="pl-3 text-xs text-gray-500 mt-1">
+                    <span v-if="isCDTask">Select the period covering both T1 and T2 dates</span>
+                    <span v-else>Satellite images from this period will be searched</span>
+                </div>
             </div>
         </div>
         <div class="flex justify-between items-center">
-            <PrimeButton label="Close" icon="pi pi-times" severity="danger" 
-                @click="close" :disabled="isLoading"
+            <PrimeButton label="Back" icon="pi pi-arrow-left" severity="secondary" 
+                @click="goBack" :disabled="isLoading"
             />
             <div>
-                <i v-show="isLoading || aiAgentStore.isLoading" class="pi pi-spin pi-spinner text-yellow-300" style="font-size: 2rem"></i>
+                <i v-show="isLoading" class="pi pi-spin pi-spinner text-yellow-300" style="font-size: 2rem"></i>
             </div>
-            <PrimeButton label="Confirm" icon="pi pi-check" severity="success" 
-                @click="confirm" :disabled="isLoading || !selectedAIModel"
+            <PrimeButton label="Search" icon="pi pi-search" severity="success" 
+                @click="confirm" :disabled="isLoading"
             />
         </div>
         <PrimeToast />
@@ -82,15 +48,14 @@ import { mapState } from "pinia";
 import useDialogStore from "@/stores/dialog";
 import useCopernicusStore from "@/stores/copernicus";
 import useAIAgentStore from "@/stores/aiAgent";
+import useMapStore from "@/stores/map";
 
 export default {
     name: "AppModelProcessingSearchRequestDialog",
     components: { },
     data() {
         return { 
-            isLoading: false,
-            selectedAIModel: null,
-            selectedSRMode: 'balanced'
+            isLoading: false
         }
     },
     computed: {
@@ -99,76 +64,77 @@ export default {
         aiAgentStore() {
             return useAIAgentStore();
         },
-        
-        selectedAgentInfo() {
-            if (!this.selectedAIModel) return null;
-            return this.aiAgentStore.availableAgents.find(agent => agent.id === this.selectedAIModel);
+
+        selectedAgent() {
+            return this.aiAgentStore.selectedAgent;
         },
 
-        /**
-         * Verifică dacă SR e selectat
-         */
-        isSRSelected() {
-            return this.selectedAIModel === 'sr-processor';
+        isCDTask() {
+            return this.selectedAgent === 'cd-processor' || this.selectedAgent === 'cd-chm-processor';
         },
 
-        /**
-         * Opțiunile pentru dropdown-ul de mod SR
-         */
-        srModeOptions() {
-            return this.aiAgentStore.srPresetOptions;
+        taskLabel() {
+            const labels = {
+                'sr-processor': 'Super Resolution',
+                'ch-processor': 'Canopy Height',
+                'cd-processor': 'Change Detection (Urban)',
+                'cd-chm-processor': 'Deforestation Detection'
+            };
+            return labels[this.selectedAgent] || 'Processing';
         },
 
-        /**
-         * Info despre modul SR selectat
-         */
-        selectedSRModeInfo() {
-            if (!this.selectedSRMode) return null;
-            return this.srModeOptions.find(m => m.id === this.selectedSRMode);
-        }
-    },
-    watch: {
-        /**
-         * Când utilizatorul schimbă agentul, încarcă modurile SR dacă e cazul
-         */
-        selectedAIModel(newVal) {
-            if (newVal === 'sr-processor') {
-                this.aiAgentStore.loadSRModes();
-            }
+        taskDescription() {
+            const descs = {
+                'sr-processor': `Mode: ${this.aiAgentStore.selectedSRMode || 'sharp'}`,
+                'ch-processor': 'Global CHM Model — requires L2A scenes',
+                'cd-processor': 'CVA on 2 super-resolved scenes (fidelity mode)',
+                'cd-chm-processor': 'ΔCHM on 2 canopy height maps'
+            };
+            return descs[this.selectedAgent] || '';
         },
 
-        /**
-         * Sincronizează modul SR selectat cu store-ul
-         */
-        selectedSRMode(newVal) {
-            this.aiAgentStore.setSRMode(newVal);
-        }
-    },
-    async mounted() {
-        await this.aiAgentStore.loadAvailableAgents();
-        
-        if (this.aiAgentStore.availableAgents.length > 0) {
-            this.selectedAIModel = this.aiAgentStore.availableAgents[0].id;
+        taskIcon() {
+            const icons = {
+                'sr-processor': 'pi pi-image',
+                'ch-processor': 'pi pi-sun',
+                'cd-processor': 'pi pi-arrows-h',
+                'cd-chm-processor': 'pi pi-chart-line'
+            };
+            return icons[this.selectedAgent] || 'pi pi-cog';
         }
     },
     methods: {
+        goBack() {
+            const dialogStore = useDialogStore();
+            // Resetează datele din calendar
+            dialogStore.modelProcessingSearchRequestDialog.requestInfo.selectedDates = null;
+            
+            dialogStore.hideModelProcessingSearchRequestDialog();
+            
+            // Șterge zona desenată
+            const mapStore = useMapStore();
+            mapStore.removeDrawLayer();
+            
+            // Redeschide task selector
+            dialogStore.showTaskSelector();
+        },
         close() {
             const dialogStore = useDialogStore();
             dialogStore.hideModelProcessingSearchRequestDialog();
         },
+        onDateSelect() {
+            const dates = this.modelProcessingSearchRequestDialog.requestInfo.selectedDates;
+            // Când ambele date sunt selectate, închide calendarul
+            if (dates && dates.length === 2 && dates[0] && dates[1]) {
+                this.$nextTick(() => {
+                    if (this.$refs.datePicker) {
+                        this.$refs.datePicker.overlayVisible = false;
+                    }
+                });
+            }
+        },
         async confirm() { 
             this.isLoading = true;
-
-            if (!this.selectedAIModel) {
-                this.$toast.add({ 
-                    severity: "warn", 
-                    summary: "WARNING", 
-                    detail: "Please select an AI model!", 
-                    life: 3000
-                });
-                this.isLoading = false;
-                return;
-            }
 
             if (!this.modelProcessingSearchRequestDialog.requestInfo.selectedDates || 
                 this.modelProcessingSearchRequestDialog.requestInfo.selectedDates.length < 2) {
@@ -182,13 +148,6 @@ export default {
                 return;
             }
 
-            // Salvează modelul și modul SR selectat în store
-            this.aiAgentStore.setSelectedAgent(this.selectedAIModel);
-            if (this.isSRSelected) {
-                this.aiAgentStore.setSRMode(this.selectedSRMode);
-            }
-
-            // Send search request
             const copernicusStore = useCopernicusStore();
             let searchResponse = await copernicusStore.search(
                 this.modelProcessingSearchRequestDialog.requestInfo.geoJson,
@@ -225,5 +184,4 @@ export default {
 </script>
 
 <style lang="scss" scoped>
-
 </style>

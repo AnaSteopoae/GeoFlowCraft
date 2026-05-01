@@ -32,6 +32,11 @@ export default defineStore('copernicus', {
         async checkDownloadStatus(taskId) {
             let statusResponse = await copernicusService.getDownloadStatus(taskId);
             return statusResponse;
+        },
+        
+        async checkS1Availability(bbox, targetDate, daysTolerance = 6) {
+            let response = await copernicusService.checkS1Availability(bbox, targetDate, daysTolerance);
+            return response;
         }
     }
 })

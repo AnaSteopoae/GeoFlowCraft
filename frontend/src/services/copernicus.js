@@ -25,5 +25,14 @@ export default {
         let response = await axios.get(`${API_URL}/status/${taskId}`);
 
         return response.data;
+    },
+
+    async checkS1Availability(bbox, targetDate, daysTolerance = 6) {
+        let response = await axios.post(`${API_URL}/check/s1`, {
+            bbox: bbox,
+            target_date: targetDate,
+            days_tolerance: daysTolerance
+        });
+        return response.data;
     }
 }

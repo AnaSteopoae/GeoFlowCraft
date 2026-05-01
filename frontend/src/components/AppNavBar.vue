@@ -33,6 +33,10 @@
                 outlined
                 @click="showResultsDialog"
             />
+            <AppTaskSelectorDialog 
+                v-model="taskSelectorVisible" 
+                @task-selected="onTaskSelected" 
+            />
         </nav>
     </div>
 </template>
@@ -41,32 +45,49 @@
 import { RouterLink } from 'vue-router'
 import useDialogStore from "@/stores/dialog";
 import AppProcessingResultsDialog from "@/components/dialogs/AppProcessingResultsDialog.vue";
+import AppTaskSelectorDialog from "@/components/dialogs/AppTaskSelectorDialog.vue";
+import { useDialog } from 'primevue';
 
 export default {
     name: "AppNavBar",
     components: {
         RouterLink,
-        AppProcessingResultsDialog
+        AppProcessingResultsDialog,
+        AppTaskSelectorDialog
     },
     data() {
         return {
             showProcessingResultsDialog: false
         }
     },
-    computed: {},
+    computed: {
+        taskSelectorVisible: {
+            get() { return useDialogStore().taskSelectorVisible; },
+            set(val) { 
+                const store = useDialogStore();
+                if (val) store.showTaskSelector();
+                else store.hideTaskSelector();
+            }
+        }
+    },
     methods: {
         showDrawConfirmDialog() {
             const dialogStore = useDialogStore();
-            dialogStore.showConfirmDialog({
-                title: "Model processing - draw mode activation",
-                message: "Draw mode will be activated. To continue, confirm the activation of draw mode.",
-                noButtonText: "Discard",
-                yesButtonText: "Confirm",
-                event: "MODEL_PROCESSING_ACTIVATE_DRAW_MODE" // TODO: Create an enum of events
-            });
+            dialogStore.showTaskSelector();
         },
         showResultsDialog() {
             this.showProcessingResultsDialog = true;
+        },
+        onTaskSelected(taskInfo) {
+        // După ce utilizatorul alege task-ul, activează draw mode
+            const dialogStore = useDialogStore();
+            dialogStore.showConfirmDialog({
+                title: "Model processing - draw mode activation",
+                message: "Draw mode will be activated. Draw a polygon on the map to select the area.",
+                noButtonText: "Discard",
+                yesButtonText: "Confirm",
+                event: "MODEL_PROCESSING_ACTIVATE_DRAW_MODE"
+            });
         }
     }
 }

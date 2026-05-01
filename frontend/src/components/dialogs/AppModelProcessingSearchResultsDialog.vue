@@ -31,7 +31,9 @@
                             {{ moment(item.datetime).format("YYYY-MM-DD HH:mm") }}
                         </div>
                         <div class="w-[150px] flex items-center overflow-hidden">{{ item.stac_item.properties.cloudCover }}</div>
-                        <div class="w-[200px] flex items-center overflow-hidden">{{ item.id }}</div>
+                        <div class="w-[200px] flex items-center overflow-hidden" :title="item.id">
+                            {{ extractTileInfo(item.id) }}
+                        </div>
                         <div class="w-[100px] flex items-center gap-1">
                             <PrimeButton 
                                 v-if="item.visible"
@@ -241,6 +243,49 @@ export default {
                 return;
             }
 
+            // Verificare S1 pentru SR (înainte de descărcare)
+            if (aiAgentStore.selectedAgent === 'sr-processor') {
+                const item = selectedItems[0];
+                const bbox = item.bbox || this.getBboxFromSearchArea();
+                const dateMatch = item.id.match(/(\d{8})T/);
+                const targetDate = dateMatch 
+                    ? `${dateMatch[1].substring(0,4)}-${dateMatch[1].substring(4,6)}-${dateMatch[1].substring(6,8)}`
+                    : item.datetime.substring(0, 10);
+
+                this.$toast.add({ 
+                    severity: "info", 
+                    summary: "Checking SAR data", 
+                    detail: "Verifying Sentinel-1 availability...", 
+                    life: 5000
+                });
+
+                try {
+                    const copernicusStore = useCopernicusStore();
+                    const s1Check = await copernicusStore.checkS1Availability(bbox, targetDate);
+                    
+                    if (!s1Check.available) {
+                        this.$toast.add({ 
+                            severity: "error", 
+                            summary: "No SAR data available", 
+                            detail: `${s1Check.message}. Please select another scene.`, 
+                            life: 8000
+                        });
+                        // Debifează scena selectată
+                        selectedItems.forEach(i => i.selected = false);
+                        return; // Rămâne pe dialog
+                    }
+
+                    this.$toast.add({ 
+                        severity: "success", 
+                        summary: "SAR data found", 
+                        detail: s1Check.message, 
+                        life: 3000
+                    });
+                } catch (err) {
+                    console.warn('S1 check failed, proceeding anyway:', err);
+                }
+            }
+
             // Flow normal (SR, CHM)
             this.$toast.add({ 
                 severity: "info", 
@@ -412,6 +457,30 @@ export default {
                 
                 const itemT1 = sorted[0];
                 const itemT2 = sorted[1];
+
+                // Verificare S1 pentru ambele scene CD-SR
+                if (aiAgentStore.selectedAgent === 'cd-processor') {
+                    const copernicusStore = useCopernicusStore();
+                    
+                    for (const item of [itemT1, itemT2]) {
+                        const dateMatch = item.id.match(/(\d{8})T/);
+                        const targetDate = dateMatch 
+                            ? `${dateMatch[1].substring(0,4)}-${dateMatch[1].substring(4,6)}-${dateMatch[1].substring(6,8)}`
+                            : item.datetime.substring(0, 10);
+                        
+                        const s1Check = await copernicusStore.checkS1Availability(bbox, targetDate);
+                        
+                        if (!s1Check.available) {
+                            this.$toast.add({ 
+                                severity: "error", 
+                                summary: "No SAR data", 
+                                detail: `No S1 data for scene ${item.id.substring(0, 30)}... (${targetDate}). Select different dates.`, 
+                                life: 8000
+                            });
+                            return; // Nu închide dialogul
+                        }
+                    }
+                }
                 
                 this.$toast.add({ 
                     severity: "info", 
@@ -512,6 +581,16 @@ export default {
         },
         moment(dateString) {
             return moment(dateString);
+        },
+        extractTileInfo(id) {
+            // S2B_MSIL2A_20260324T094029_N0512_R036_T34TDR_20260324T133022.SAFE
+            const parts = id.split('_');
+            if (parts.length >= 6) {
+                const level = parts[1]; // MSIL2A
+                const tile = parts[5];  // T34TDR
+                return `${tile} (${level})`;
+            }
+            return id.substring(0, 30);
         }
     }
 }

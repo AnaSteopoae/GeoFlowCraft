@@ -232,7 +232,7 @@ class AIProcessorService {
         while (Date.now() - startTime < maxWaitMs) {
             const statusResponse = await axios.get(
                 `${copernicusUrl}/status/s1/${taskId}`,
-                { timeout: 10000 }
+                { timeout: 30000 }
             );
             
             const status = statusResponse.data;

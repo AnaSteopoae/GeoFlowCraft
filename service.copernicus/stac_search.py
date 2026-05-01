@@ -83,6 +83,37 @@ class STACSearch:
                     if attr.get("Name") == "cloudCover":
                         cloud_cover = attr.get("Value", 0)
                         break
+                 # Fallback: check in ContentDate or other fields
+                if cloud_cover == 0:
+                    # Try S3Path-based extraction or online attribute
+                    online_attrs = product.get("Attributes", [])
+                    for attr in online_attrs:
+                        name = attr.get("Name", "")
+                        if "cloud" in name.lower():
+                            cloud_cover = attr.get("Value", 0)
+                            logger.info(f"  Cloud cover found via '{name}': {cloud_cover}")
+                            break
+                
+                # Extract bbox from Footprint geometry
+                product_bbox = None
+                footprint = product.get("Footprint")
+                if footprint:
+                    try:
+                        from shapely import wkt
+                        # OData format: geography'SRID=4326;POLYGON((...))'
+                        wkt_str = footprint
+                        if "geography'" in wkt_str:
+                            wkt_str = wkt_str.replace("geography'", "").rstrip("'")
+                        if wkt_str.startswith("SRID="):
+                            wkt_str = wkt_str.split(";", 1)[1]
+                        geom = wkt.loads(wkt_str)
+                        product_bbox = list(geom.bounds)
+                    except Exception as e:
+                        logger.warning(f"Could not parse footprint: {e}")
+                
+                if not product_bbox:
+                    # Fallback la bbox-ul zonei de search
+                    product_bbox = bbox
                 
                 # Create a STAC-like structure for frontend compatibility
                 stac_item = {
@@ -92,7 +123,7 @@ class STACSearch:
                         "cloudCover": cloud_cover,
                         "platform": "sentinel-2"
                     },
-                    "bbox": None,
+                    "bbox": product_bbox,
                     "assets": {},
                     "original_odata": product
                 }
@@ -102,12 +133,41 @@ class STACSearch:
                     "datetime": product.get("ContentDate", {}).get("Start"),
                     "cloud_cover": cloud_cover,
                     "platform": "sentinel-2",
-                    "bbox": None,
+                    "bbox": product_bbox,
                     "assets": {},
                     "stac_item": stac_item  # STAC-compatible format
                 }
                 filtered_items.append(item_info)
                 logger.info(f"✓ Found Sentinel-2: {item_info['id']}")
+                logger.info(f"  Product attributes: {json.dumps(product.get('Attributes', [])[:3], default=str)}")
+
+            # Deduplicare — păstrează o singură intrare per tile+dată
+            # Prioritate: L2A > L1C (L2A e corectat atmosferic)
+            seen = {}
+            deduplicated = []
+            for item in filtered_items:
+                # Extrage tile ID și data din numele produsului
+                # Ex: S2B_MSIL2A_20260427T092029_N0511_R093_T34TGR_20260427T112850
+                parts = item["id"].split("_")
+                if len(parts) >= 6:
+                    tile_id = parts[5]  # T34TGR
+                    date_str = parts[2][:8]  # 20260427
+                    key = f"{tile_id}_{date_str}"
+                    
+                    if key not in seen:
+                        seen[key] = item
+                    else:
+                        # Păstrează L2A peste L1C
+                        existing = seen[key]
+                        if "MSIL1C" in existing["id"] and "MSIL2A" in item["id"]:
+                            seen[key] = item
+                            logger.info(f"  Replaced L1C with L2A: {item['id']}")
+                else:
+                    seen[item["id"]] = item
+            
+            deduplicated = list(seen.values())
+            logger.info(f"Deduplicated: {len(filtered_items)} → {len(deduplicated)} items")
+            filtered_items = deduplicated
             
             return filtered_items
             
