@@ -197,9 +197,10 @@ class AIProcessorService {
 
          // Publicare automată pe hartă
         const dateStr = target_date || new Date().toISOString().substring(0, 10);
+        const resultName = inputData.resultName || `SR ${mode} ${dateStr} ${Date.now().toString(36)}`;
         const publishResult = await autoPublishResult({
             filePath: srResult.outputPath,
-            name: `SR ${mode} ${dateStr}`,
+            name: resultName,
             type: 'sr',
             description: `Super-rezoluție ${mode} (α=${srResult.alpha}) din ${dateStr}`
         });

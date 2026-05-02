@@ -6,6 +6,7 @@
       <AppDataSetList class="border-b-2 border-gray-300" />
       <!-- List of visible datalayers -->
       <AppDataLayerList />
+      <AppNavBar @open-existing-results="onOpenExistingResults" />
     </div>
     <!-- Dialogs -->
     <AppConfirmDialog @confirm-yes="onConfirmYes" @confirm-no="onConfirmNo" />
@@ -15,6 +16,12 @@
     <AppDataLayerCreateDialog @created-data-layer="onDataLayerCreated"/>
     <AppModelProcessingSearchRequestDialog />
     <AppModelProcessingSearchResultsDialog />
+    <AppExistingResultsDialog 
+    v-model="showExistingResults"
+    :maxSelections="existingResultsMax"
+    :resultType="existingResultsType"
+    @results-selected="onExistingResultsSelected"
+    />
     <PrimeToast />
   </div>
 
@@ -36,6 +43,7 @@ import AppDataLayerList from "@/components/AppDataLayerList.vue";
 import AppDataLayerCreateDialog from "@/components/dialogs/AppDataLayerCreateDialog.vue";
 import AppModelProcessingSearchRequestDialog from "@/components/dialogs/AppModelProcessingSearchRequestDialog.vue";
 import AppModelProcessingSearchResultsDialog from "@/components/dialogs/AppModelProcessingSearchResultsDialog.vue";
+import AppExistingResultsDialog from '@/components/dialogs/AppExistingResultsDialog.vue';
 
 export default {
   name: "HomeView",
@@ -45,11 +53,16 @@ export default {
     AppDataSetCreateDialog, AppDataSetDetailsDialog,
     AppDataLayerList,
     AppDataLayersDialog, AppDataLayerCreateDialog,
-    AppModelProcessingSearchRequestDialog, AppModelProcessingSearchResultsDialog
+    AppModelProcessingSearchRequestDialog, AppModelProcessingSearchResultsDialog,
+    AppExistingResultsDialog
+
   },
   data() {
     return {
-      pendingModelProcessingFeature: null
+      pendingModelProcessingFeature: null,
+      showExistingResults: false,
+      existingResultsType: 'sr',
+      existingResultsMax: 2
     }
   },
   mounted() {
@@ -58,6 +71,11 @@ export default {
   },
   computed: {},
   methods: {
+    onOpenExistingResults({ type, max }) {
+    this.existingResultsType = type;
+    this.existingResultsMax = max;
+    this.showExistingResults = true;
+  },
     onDataSetCreated() {
       this.$toast.add({ severity: "success", summary: "Success", detail: "The dataset has been successfully created!", life: 3000 });
     },
@@ -165,6 +183,12 @@ export default {
       const mapStore = useMapStore();
       mapStore.removeDrawLayer();
       this.pendingModelProcessingFeature = null;
+    },
+    onExistingResultsSelected(selection) {
+    console.log('Selected existing results:', selection);
+    // TODO: procesează CD cu rezultatele selectate
+    // selection.type === 'pair' → selection.t1, selection.t2
+    // selection.type === 'single' → selection.result
     }
   }
 }

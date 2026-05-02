@@ -81,6 +81,18 @@ export default {
         onTaskSelected(taskInfo) {
         // După ce utilizatorul alege task-ul, activează draw mode
             const dialogStore = useDialogStore();
+            dialogStore.setSelectedTaskInfo(taskInfo);
+
+            // CD cu "existing" → deschide dialogul de rezultate existente
+            if ((taskInfo.task === 'cd-processor' || taskInfo.task === 'cd-chm-processor') 
+                && taskInfo.cdSource === 'existing') {
+                // Emite event către HomeView pentru a deschide ExistingResultsDialog
+                this.$emit('open-existing-results', {
+                    type: taskInfo.task === 'cd-processor' ? 'sr' : 'chm',
+                    max: 2
+                });
+                return;
+            }
             dialogStore.showConfirmDialog({
                 title: "Model processing - draw mode activation",
                 message: "Draw mode will be activated. Draw a polygon on the map to select the area.",

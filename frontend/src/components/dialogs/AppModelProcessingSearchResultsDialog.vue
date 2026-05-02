@@ -67,7 +67,7 @@
                 </div>
             </div>
             <div v-else>
-                There is not data.
+                There is no data.
             </div>
         </div>
         <div class="flex justify-between items-center">
@@ -88,6 +88,41 @@
             v-model="showResultsDialog"
             :productId="selectedProductId"
         />
+
+        <!-- Name input dialog -->
+        <PrimeDialog 
+            v-model:visible="showNameDialog" 
+            modal 
+            header="Name your result"
+            :style="{ width: '25rem' }"
+        >
+            <div class="flex flex-col gap-3 my-2">
+                <div class="text-sm text-gray-400">
+                    Choose a name for this processing result:
+                </div>
+                <InputText 
+                    v-model="resultName" 
+                    placeholder="e.g. Brașov urban area Feb 2026"
+                    class="w-full"
+                    @keyup.enter="confirmProcessing"
+                />
+                <div class="text-xs text-gray-500">
+                    This name will appear in the map layers and View Results.
+                </div>
+            </div>
+            <template #footer>
+                <div class="flex justify-between w-full">
+                    <PrimeButton label="Cancel" icon="pi pi-times" severity="secondary" @click="showNameDialog = false" />
+                    <PrimeButton 
+                        label="Start processing" 
+                        icon="pi pi-play" 
+                        severity="success"
+                        :disabled="!resultName || resultName.trim().length === 0"
+                        @click="confirmProcessing" 
+                    />
+                </div>
+            </template>
+        </PrimeDialog>
     </PrimeDialog>
 </template>
 
@@ -98,6 +133,7 @@ import useCopernicusStore from "@/stores/copernicus";
 import useMapStore from "@/stores/map";
 import useAIAgentStore from "@/stores/aiAgent";
 import AppProcessingResultsDialog from "@/components/dialogs/AppProcessingResultsDialog.vue";
+import InputText from 'primevue/inputtext';
 
 import moment from 'moment';
 import { transformExtent } from 'ol/proj';
@@ -105,12 +141,17 @@ import { transformExtent } from 'ol/proj';
 export default {
     name: "AppModelProcessingSearchResultsDialog",
     components: {
-        AppProcessingResultsDialog
+        AppProcessingResultsDialog,
+        InputText
     },
     data() {
         return {
             showResultsDialog: false,
-            selectedProductId: null
+            selectedProductId: null,
+            showNameDialog: false,
+            resultName: '',
+            pendingProcessItems: null,
+            pendingProcessType: null
         }
     },
     computed: {
@@ -127,22 +168,21 @@ export default {
             
             if (selectedAgent.inputFormat === 'sentinel2-safe') {
                 return this.areaItems.filter(item => 
-                    (item.id.startsWith('S2A_MSIL2A_') || item.id.startsWith('S2B_MSIL2A_'))
+                    (item.id.startsWith('S2A_MSIL2A_') || item.id.startsWith('S2B_MSIL2A_') || item.id.startsWith('S2C_MSIL2A_'))
                 );
             }
             
             if (selectedAgent.inputFormat === 'sentinel2-s1-stack') {
                 return this.areaItems.filter(item => 
-                    item.id.startsWith('S2A_MSIL2A_') || item.id.startsWith('S2B_MSIL2A_') ||
-                    item.id.startsWith('S2A_MSIL1C_') || item.id.startsWith('S2B_MSIL1C_')
+                    item.id.startsWith('S2A_MSIL2A_') || item.id.startsWith('S2B_MSIL2A_') || item.id.startsWith('S2C_MSIL2A_') ||
+                    item.id.startsWith('S2A_MSIL1C_') || item.id.startsWith('S2B_MSIL1C_') || item.id.startsWith('S2C_MSIL1C_')
                 );
             }
 
-            // Change Detection: same filter as SR (S2 images)
             if (selectedAgent.inputFormat === 'sr-temporal-pair') {
                 return this.areaItems.filter(item => 
-                    item.id.startsWith('S2A_MSIL2A_') || item.id.startsWith('S2B_MSIL2A_') ||
-                    item.id.startsWith('S2A_MSIL1C_') || item.id.startsWith('S2B_MSIL1C_')
+                    item.id.startsWith('S2A_MSIL2A_') || item.id.startsWith('S2B_MSIL2A_') || item.id.startsWith('S2C_MSIL2A_') ||
+                    item.id.startsWith('S2A_MSIL1C_') || item.id.startsWith('S2B_MSIL1C_') || item.id.startsWith('S2C_MSIL1C_')
                 );
             }
             
@@ -164,16 +204,13 @@ export default {
             mapStore.addVectorLayer(item.id, polygonCoordinates);
             item.visible = true;
         },
+
         hideAreaItemFromMap(item) {
             const mapStore = useMapStore();
             mapStore.removeVectorLayer(item.id);
             item.visible = false;
         },
 
-        /**
-         * Extrage bbox din zona desenată de utilizator pe hartă.
-         * Folosit ca fallback când item.bbox e null (OData nu returnează bbox).
-         */
         getBboxFromSearchArea() {
             const geoJson = this.modelProcessingSearchRequestDialog.requestInfo?.geoJson;
             
@@ -204,6 +241,10 @@ export default {
             ];
         },
 
+        /**
+         * Process button handler.
+         * Validates selection, checks S1 availability, then shows name dialog.
+         */
         async process() {
             const selectedItems = this.compatibleAreaItems.filter(item => item.selected);
             const aiAgentStore = useAIAgentStore();
@@ -239,83 +280,118 @@ export default {
                     });
                     return;
                 }
-                await this.processChangeDetection(selectedItems);
-                return;
             }
 
-            // Verificare S1 pentru SR (înainte de descărcare)
-            if (aiAgentStore.selectedAgent === 'sr-processor') {
-                const item = selectedItems[0];
-                const bbox = item.bbox || this.getBboxFromSearchArea();
-                const dateMatch = item.id.match(/(\d{8})T/);
-                const targetDate = dateMatch 
-                    ? `${dateMatch[1].substring(0,4)}-${dateMatch[1].substring(4,6)}-${dateMatch[1].substring(6,8)}`
-                    : item.datetime.substring(0, 10);
+            // Verificare S1 pentru SR și CD-SR
+            if (aiAgentStore.selectedAgent === 'sr-processor' || aiAgentStore.selectedAgent === 'cd-processor') {
+                const bbox = this.getBboxFromSearchArea();
+                
+                for (const item of selectedItems) {
+                    const dateMatch = item.id.match(/(\d{8})T/);
+                    const targetDate = dateMatch 
+                        ? `${dateMatch[1].substring(0,4)}-${dateMatch[1].substring(4,6)}-${dateMatch[1].substring(6,8)}`
+                        : item.datetime.substring(0, 10);
 
+                    this.$toast.add({ 
+                        severity: "info", 
+                        summary: "Checking SAR data", 
+                        detail: `Verifying S1 availability for ${targetDate}...`, 
+                        life: 5000
+                    });
+
+                    try {
+                        const copernicusStore = useCopernicusStore();
+                        const s1Check = await copernicusStore.checkS1Availability(bbox, targetDate);
+                        
+                        if (!s1Check.available) {
+                            this.$toast.add({ 
+                                severity: "error", 
+                                summary: "No SAR data available", 
+                                detail: `${s1Check.message}. Please select another scene.`, 
+                                life: 8000
+                            });
+                            selectedItems.forEach(i => i.selected = false);
+                            return;
+                        }
+
+                        this.$toast.add({ 
+                            severity: "success", 
+                            summary: "SAR data found", 
+                            detail: s1Check.message, 
+                            life: 3000
+                        });
+                    } catch (err) {
+                        console.warn('S1 check failed, proceeding anyway:', err);
+                    }
+                }
+            }
+
+            // Generează nume implicit
+            const item = selectedItems[0];
+            const dateMatch = item.id.match(/(\d{8})T/);
+            const dateStr = dateMatch 
+                ? `${dateMatch[1].substring(0,4)}-${dateMatch[1].substring(4,6)}-${dateMatch[1].substring(6,8)}`
+                : '';
+            const tileMatch = item.id.match(/T\d{2}[A-Z]{3}/);
+            const tileId = tileMatch ? tileMatch[0] : '';
+            
+            const taskLabels = {
+                'sr-processor': 'SR',
+                'ch-processor': 'CHM',
+                'cd-processor': 'CD-SR',
+                'cd-chm-processor': 'CD-CHM'
+            };
+            const taskLabel = taskLabels[aiAgentStore.selectedAgent] || 'Result';
+            
+            this.resultName = `${taskLabel} ${tileId} ${dateStr}`.trim();
+            this.pendingProcessItems = selectedItems;
+            this.pendingProcessType = aiAgentStore.selectedAgent === 'cd-processor' ? 'cd' : 'single';
+            this.showNameDialog = true;
+        },
+
+        /**
+         * Called after user confirms the result name.
+         * Starts the actual processing pipeline.
+         */
+        async confirmProcessing() {
+            this.showNameDialog = false;
+            
+            const aiAgentStore = useAIAgentStore();
+            aiAgentStore.resultName = this.resultName.trim();
+            
+            if (this.pendingProcessType === 'cd') {
+                await this.processChangeDetection(this.pendingProcessItems);
+            } else {
                 this.$toast.add({ 
                     severity: "info", 
-                    summary: "Checking SAR data", 
-                    detail: "Verifying Sentinel-1 availability...", 
+                    summary: "Processing", 
+                    detail: `Starting "${this.resultName}"...`, 
                     life: 5000
                 });
 
                 try {
-                    const copernicusStore = useCopernicusStore();
-                    const s1Check = await copernicusStore.checkS1Availability(bbox, targetDate);
-                    
-                    if (!s1Check.available) {
-                        this.$toast.add({ 
-                            severity: "error", 
-                            summary: "No SAR data available", 
-                            detail: `${s1Check.message}. Please select another scene.`, 
-                            life: 8000
-                        });
-                        // Debifează scena selectată
-                        selectedItems.forEach(i => i.selected = false);
-                        return; // Rămâne pe dialog
+                    this.close();
+
+                    for (const item of this.pendingProcessItems) {
+                        await this.processImage(item, aiAgentStore.selectedAgent);
                     }
 
                     this.$toast.add({ 
                         severity: "success", 
-                        summary: "SAR data found", 
-                        detail: s1Check.message, 
-                        life: 3000
+                        summary: "SUCCESS", 
+                        detail: `"${this.resultName}" processed successfully!`, 
+                        life: 5000
                     });
-                } catch (err) {
-                    console.warn('S1 check failed, proceeding anyway:', err);
+
+                } catch (error) {
+                    console.error('Error processing images:', error);
+                    this.$toast.add({ 
+                        severity: "error", 
+                        summary: "ERROR", 
+                        detail: `Processing failed: ${error.message}`, 
+                        life: 5000
+                    });
                 }
-            }
-
-            // Flow normal (SR, CHM)
-            this.$toast.add({ 
-                severity: "info", 
-                summary: "Processing", 
-                detail: `Starting download and processing of ${selectedItems.length} image(s)...`, 
-                life: 5000
-            });
-
-            try {
-                this.close();
-
-                for (const item of selectedItems) {
-                    await this.processImage(item, aiAgentStore.selectedAgent);
-                }
-
-                this.$toast.add({ 
-                    severity: "success", 
-                    summary: "SUCCESS", 
-                    detail: `Successfully processed ${selectedItems.length} image(s)!`, 
-                    life: 5000
-                });
-
-            } catch (error) {
-                console.error('Error processing images:', error);
-                this.$toast.add({ 
-                    severity: "error", 
-                    summary: "ERROR", 
-                    detail: `Processing failed: ${error.message}`, 
-                    life: 5000
-                });
             }
         },
 
@@ -323,7 +399,6 @@ export default {
             try {
                 console.log(`Processing image ${item.id} with agent ${agentId}`);
 
-                // ── Pas 1: Descarcă S2 ──
                 this.$toast.add({ 
                     severity: "info", 
                     summary: "Downloading", 
@@ -341,7 +416,6 @@ export default {
                 const taskId = downloadResponse.task_id;
                 console.log('Download task ID:', taskId);
 
-                // ── Pas 2: Polling descărcare S2 ──
                 let downloadCompleted = false;
                 let downloadResult = null;
                 let attempts = 0;
@@ -374,7 +448,6 @@ export default {
                     throw new Error('Download timeout - taking too long');
                 }
 
-                // ── Pas 3: Procesează cu AI (diferit per agent) ──
                 this.$toast.add({ 
                     severity: "info", 
                     summary: "Processing", 
@@ -386,7 +459,6 @@ export default {
                 let result;
 
                 if (agentId === 'sr-processor') {
-                    // ── SR: trimite s2_path, bbox, target_date ──
                     const dateMatch = item.id.match(/(\d{8})T/);
                     const targetDate = dateMatch 
                         ? `${dateMatch[1].substring(0,4)}-${dateMatch[1].substring(4,6)}-${dateMatch[1].substring(6,8)}`
@@ -396,8 +468,7 @@ export default {
                         ? downloadResult.files[0] 
                         : `${item.id}/${item.id}.zip`;
 
-                    // Bbox: din item sau fallback din zona desenată pe hartă
-                    const bbox = item.bbox || this.getBboxFromSearchArea();
+                    const bbox = this.getBboxFromSearchArea();
                     
                     if (!bbox) {
                         throw new Error('Could not determine bounding box for SR processing');
@@ -414,13 +485,14 @@ export default {
                         s2_path: s2Path,
                         bbox: bbox,
                         target_date: targetDate,
-                        mode: aiAgentStore.selectedSRMode
+                        mode: aiAgentStore.selectedSRMode,
+                        resultName: aiAgentStore.resultName || this.resultName
                     });
 
                 } else {
-                    // ── CHM și alți agenți: format existent ──
                     result = await aiAgentStore.processWithSelectedAgent({
-                        image_filenames: [`${item.id}/${item.id}.zip`]
+                        image_filenames: [`${item.id}/${item.id}.zip`],
+                        resultName: aiAgentStore.resultName || this.resultName
                     });
                 }
 
@@ -443,44 +515,16 @@ export default {
             }
         },
 
-        /**
-         * Change Detection: descarcă 2 scene, aplică SR pe ambele, apoi CVA.
-         */
         async processChangeDetection(selectedItems) {
             try {
                 this.close();
 
-                // Sortează cronologic — T1 mai vechi, T2 mai recent
                 const sorted = [...selectedItems].sort((a, b) => 
                     new Date(a.datetime) - new Date(b.datetime)
                 );
                 
                 const itemT1 = sorted[0];
                 const itemT2 = sorted[1];
-
-                // Verificare S1 pentru ambele scene CD-SR
-                if (aiAgentStore.selectedAgent === 'cd-processor') {
-                    const copernicusStore = useCopernicusStore();
-                    
-                    for (const item of [itemT1, itemT2]) {
-                        const dateMatch = item.id.match(/(\d{8})T/);
-                        const targetDate = dateMatch 
-                            ? `${dateMatch[1].substring(0,4)}-${dateMatch[1].substring(4,6)}-${dateMatch[1].substring(6,8)}`
-                            : item.datetime.substring(0, 10);
-                        
-                        const s1Check = await copernicusStore.checkS1Availability(bbox, targetDate);
-                        
-                        if (!s1Check.available) {
-                            this.$toast.add({ 
-                                severity: "error", 
-                                summary: "No SAR data", 
-                                detail: `No S1 data for scene ${item.id.substring(0, 30)}... (${targetDate}). Select different dates.`, 
-                                life: 8000
-                            });
-                            return; // Nu închide dialogul
-                        }
-                    }
-                }
                 
                 this.$toast.add({ 
                     severity: "info", 
@@ -493,7 +537,6 @@ export default {
                 const aiAgentStore = useAIAgentStore();
                 const copernicusStore = useCopernicusStore();
 
-                // Extrage data din ID-ul scenei
                 const extractDate = (item) => {
                     const match = item.id.match(/(\d{8})T/);
                     return match 
@@ -501,11 +544,9 @@ export default {
                         : item.datetime.substring(0, 10);
                 };
 
-                // Descarcă ambele scene S2
                 const dl1 = await copernicusStore.downloadImages([itemT1.stac_item]);
                 const dl2 = await copernicusStore.downloadImages([itemT2.stac_item]);
                 
-                // Polling — așteaptă descărcarea ambelor
                 const waitDownload = async (taskId, label) => {
                     for (let i = 0; i < 60; i++) {
                         await new Promise(r => setTimeout(r, 5000));
@@ -530,12 +571,12 @@ export default {
                     life: 30000
                 });
 
-                // Apelează CD cu ambele scene — backend-ul aplică SR + CVA
                 const result = await aiAgentStore.processWithSelectedAgent({
                     scene_t1: { s2_path: s2PathT1, bbox: bbox, target_date: extractDate(itemT1) },
                     scene_t2: { s2_path: s2PathT2, bbox: bbox, target_date: extractDate(itemT2) },
                     mode: 'fidelity',
-                    threshold_method: 'otsu'
+                    threshold_method: 'otsu',
+                    resultName: aiAgentStore.resultName || this.resultName
                 });
 
                 console.log('Change Detection result:', result);
@@ -579,15 +620,16 @@ export default {
             const dialogStore = useDialogStore();
             dialogStore.hideModelProcessingSearchResultsDialog();
         },
+
         moment(dateString) {
             return moment(dateString);
         },
+
         extractTileInfo(id) {
-            // S2B_MSIL2A_20260324T094029_N0512_R036_T34TDR_20260324T133022.SAFE
             const parts = id.split('_');
             if (parts.length >= 6) {
-                const level = parts[1]; // MSIL2A
-                const tile = parts[5];  // T34TDR
+                const level = parts[1];
+                const tile = parts[5];
                 return `${tile} (${level})`;
             }
             return id.substring(0, 30);
@@ -597,5 +639,4 @@ export default {
 </script>
 
 <style lang="scss" scoped>
-
 </style>

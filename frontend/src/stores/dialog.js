@@ -21,7 +21,9 @@ export default defineStore('dialog', {
         confirmDialogVisible: false,
         confirmDialogInfo: null,
         confirmDialogIsLoading: false,
-        taskSelectorVisible: false
+        taskSelectorVisible: false,
+        selectedTaskInfo: null,  // { task, cdSource, srMode }
+        existingResultsDialogVisible: false,
     }),
     actions: {
         // DataSetCreateDialog
@@ -85,6 +87,21 @@ export default defineStore('dialog', {
         },
         hideTaskSelector() {
             this.taskSelectorVisible = false;
+        },
+        showTaskSelector() {
+            this.taskSelectorVisible = true;
+        },
+        hideTaskSelector() {
+            this.taskSelectorVisible = false;
+        },
+        setSelectedTaskInfo(taskInfo) {
+            this.selectedTaskInfo = taskInfo;
+        },
+        showExistingResultsDialog() {
+            this.existingResultsDialogVisible = true;
+        },
+        hideExistingResultsDialog() {
+            this.existingResultsDialogVisible = false;
         },
     }
 })

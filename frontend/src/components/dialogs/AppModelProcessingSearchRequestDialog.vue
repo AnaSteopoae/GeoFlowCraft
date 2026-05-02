@@ -10,8 +10,8 @@
                 </div>
             </div>
 
-            <!-- Date range input -->
-            <div class="flex flex-col gap-1">
+            <!-- SINGLE CALENDAR: SR, CHM, CD mix (scena nouă) -->
+            <div v-if="!isCDNewMode" class="flex flex-col gap-1">
                 <div class="w-full pl-3 text-start text-gray-400">Select the time interval</div>
                 <PrimeDatePicker 
                     ref="datePicker"
@@ -19,15 +19,62 @@
                     :disabled="isLoading" 
                     selectionMode="range" 
                     showIcon 
-                    fluid 
+                    fluid
                     @date-select="onDateSelect"
                 />
                 <div class="pl-3 text-xs text-gray-500 mt-1">
-                    <span v-if="isCDTask">Select the period covering both T1 and T2 dates</span>
-                    <span v-else>Satellite images from this period will be searched</span>
+                    Satellite images from this period will be searched
+                </div>
+            </div>
+
+            <!-- DUAL CALENDARS: CD new (T1 + T2) -->
+            <div v-if="isCDNewMode" class="flex flex-col gap-4">
+                <div class="flex flex-col gap-1">
+                    <div class="w-full pl-3 text-start text-gray-400 flex items-center gap-2">
+                        <span class="inline-block w-5 h-5 rounded-full text-center text-xs leading-5 font-bold" 
+                              style="background: rgba(239, 68, 68, 0.3); color: #fca5a5;">1</span>
+                        Scene T1 — older date (before change)
+                    </div>
+                    <PrimeDatePicker 
+                        ref="datePickerT1"
+                        v-model="datesT1" 
+                        :disabled="isLoading" 
+                        selectionMode="range" 
+                        showIcon 
+                        fluid
+                        placeholder="Select T1 period"
+                        @date-select="onDateSelectT1"
+                    />
+                </div>
+
+                <div class="flex flex-col gap-1">
+                    <div class="w-full pl-3 text-start text-gray-400 flex items-center gap-2">
+                        <span class="inline-block w-5 h-5 rounded-full text-center text-xs leading-5 font-bold" 
+                              style="background: rgba(34, 197, 94, 0.3); color: #86efac;">2</span>
+                        Scene T2 — newer date (after change)
+                    </div>
+                    <PrimeDatePicker 
+                        ref="datePickerT2"
+                        v-model="datesT2" 
+                        :disabled="isLoading" 
+                        selectionMode="range" 
+                        showIcon 
+                        fluid
+                        placeholder="Select T2 period"
+                        @date-select="onDateSelectT2"
+                    />
+                </div>
+
+                <div v-if="datesT1 && datesT2 && datesT1[1] && datesT2[0]" class="pl-3 text-xs" 
+                     :style="{ color: isT2AfterT1 ? '#86efac' : '#fca5a5' }">
+                    <i :class="isT2AfterT1 ? 'pi pi-check-circle' : 'pi pi-exclamation-triangle'"></i>
+                    {{ isT2AfterT1 
+                        ? `Gap between T1 and T2: ${daysBetween} days` 
+                        : 'T2 must be after T1!' }}
                 </div>
             </div>
         </div>
+
         <div class="flex justify-between items-center">
             <PrimeButton label="Back" icon="pi pi-arrow-left" severity="secondary" 
                 @click="goBack" :disabled="isLoading"
@@ -36,7 +83,7 @@
                 <i v-show="isLoading" class="pi pi-spin pi-spinner text-yellow-300" style="font-size: 2rem"></i>
             </div>
             <PrimeButton label="Search" icon="pi pi-search" severity="success" 
-                @click="confirm" :disabled="isLoading"
+                @click="confirm" :disabled="isLoading || !canSearch"
             />
         </div>
         <PrimeToast />
@@ -52,10 +99,11 @@ import useMapStore from "@/stores/map";
 
 export default {
     name: "AppModelProcessingSearchRequestDialog",
-    components: { },
     data() {
         return { 
-            isLoading: false
+            isLoading: false,
+            datesT1: null,
+            datesT2: null
         }
     },
     computed: {
@@ -65,12 +113,28 @@ export default {
             return useAIAgentStore();
         },
 
+        dialogStore() {
+            return useDialogStore();
+        },
+
         selectedAgent() {
             return this.aiAgentStore.selectedAgent;
         },
 
-        isCDTask() {
-            return this.selectedAgent === 'cd-processor' || this.selectedAgent === 'cd-chm-processor';
+        taskInfo() {
+            return this.dialogStore.selectedTaskInfo;
+        },
+
+        isCDNewMode() {
+            return this.taskInfo 
+                && (this.taskInfo.task === 'cd-processor' || this.taskInfo.task === 'cd-chm-processor')
+                && this.taskInfo.cdSource === 'new';
+        },
+
+        isCDMixMode() {
+            return this.taskInfo 
+                && (this.taskInfo.task === 'cd-processor' || this.taskInfo.task === 'cd-chm-processor')
+                && this.taskInfo.cdSource === 'mix';
         },
 
         taskLabel() {
@@ -84,10 +148,16 @@ export default {
         },
 
         taskDescription() {
+            if (this.isCDNewMode) {
+                return 'Select date ranges for both T1 (before) and T2 (after) scenes';
+            }
+            if (this.isCDMixMode) {
+                return 'Select date range for the new scene (the other will be chosen from existing results)';
+            }
             const descs = {
                 'sr-processor': `Mode: ${this.aiAgentStore.selectedSRMode || 'sharp'}`,
                 'ch-processor': 'Global CHM Model — requires L2A scenes',
-                'cd-processor': 'CVA on 2 super-resolved scenes (fidelity mode)',
+                'cd-processor': 'CVA on 2 super-resolved scenes',
                 'cd-chm-processor': 'ΔCHM on 2 canopy height maps'
             };
             return descs[this.selectedAgent] || '';
@@ -101,30 +171,32 @@ export default {
                 'cd-chm-processor': 'pi pi-chart-line'
             };
             return icons[this.selectedAgent] || 'pi pi-cog';
+        },
+
+        isT2AfterT1() {
+            if (!this.datesT1?.[1] || !this.datesT2?.[0]) return true;
+            return new Date(this.datesT2[0]) > new Date(this.datesT1[1]);
+        },
+
+        daysBetween() {
+            if (!this.datesT1?.[1] || !this.datesT2?.[0]) return 0;
+            const diff = new Date(this.datesT2[0]) - new Date(this.datesT1[1]);
+            return Math.round(diff / (1000 * 60 * 60 * 24));
+        },
+
+        canSearch() {
+            if (this.isCDNewMode) {
+                return this.datesT1?.[0] && this.datesT1?.[1] 
+                    && this.datesT2?.[0] && this.datesT2?.[1]
+                    && this.isT2AfterT1;
+            }
+            const dates = this.modelProcessingSearchRequestDialog.requestInfo.selectedDates;
+            return dates && dates.length >= 2 && dates[0] && dates[1];
         }
     },
     methods: {
-        goBack() {
-            const dialogStore = useDialogStore();
-            // Resetează datele din calendar
-            dialogStore.modelProcessingSearchRequestDialog.requestInfo.selectedDates = null;
-            
-            dialogStore.hideModelProcessingSearchRequestDialog();
-            
-            // Șterge zona desenată
-            const mapStore = useMapStore();
-            mapStore.removeDrawLayer();
-            
-            // Redeschide task selector
-            dialogStore.showTaskSelector();
-        },
-        close() {
-            const dialogStore = useDialogStore();
-            dialogStore.hideModelProcessingSearchRequestDialog();
-        },
         onDateSelect() {
             const dates = this.modelProcessingSearchRequestDialog.requestInfo.selectedDates;
-            // Când ambele date sunt selectate, închide calendarul
             if (dates && dates.length === 2 && dates[0] && dates[1]) {
                 this.$nextTick(() => {
                     if (this.$refs.datePicker) {
@@ -133,51 +205,136 @@ export default {
                 });
             }
         },
+
+        onDateSelectT1() {
+            if (this.datesT1 && this.datesT1.length === 2 && this.datesT1[0] && this.datesT1[1]) {
+                this.$nextTick(() => {
+                    if (this.$refs.datePickerT1) {
+                        this.$refs.datePickerT1.overlayVisible = false;
+                    }
+                });
+            }
+        },
+
+        onDateSelectT2() {
+            if (this.datesT2 && this.datesT2.length === 2 && this.datesT2[0] && this.datesT2[1]) {
+                this.$nextTick(() => {
+                    if (this.$refs.datePickerT2) {
+                        this.$refs.datePickerT2.overlayVisible = false;
+                    }
+                });
+            }
+        },
+
+        goBack() {
+            const dialogStore = useDialogStore();
+            dialogStore.modelProcessingSearchRequestDialog.requestInfo.selectedDates = null;
+            this.datesT1 = null;
+            this.datesT2 = null;
+            dialogStore.hideModelProcessingSearchRequestDialog();
+            const mapStore = useMapStore();
+            mapStore.removeDrawLayer();
+            dialogStore.showTaskSelector();
+        },
+
+        close() {
+            const dialogStore = useDialogStore();
+            dialogStore.hideModelProcessingSearchRequestDialog();
+        },
+
         async confirm() { 
             this.isLoading = true;
 
-            if (!this.modelProcessingSearchRequestDialog.requestInfo.selectedDates || 
-                this.modelProcessingSearchRequestDialog.requestInfo.selectedDates.length < 2) {
+            if (this.isCDNewMode) {
+                await this.searchForCD();
+            } else {
+                await this.searchSingle();
+            }
+
+            this.isLoading = false;
+        },
+
+        async searchSingle() {
+            const dates = this.modelProcessingSearchRequestDialog.requestInfo.selectedDates;
+            if (!dates || dates.length < 2) {
                 this.$toast.add({ 
-                    severity: "warn", 
-                    summary: "WARNING", 
-                    detail: "Please select a valid date range!", 
-                    life: 3000
+                    severity: "warn", summary: "WARNING", 
+                    detail: "Please select a valid date range!", life: 3000
                 });
-                this.isLoading = false;
                 return;
             }
 
             const copernicusStore = useCopernicusStore();
             let searchResponse = await copernicusStore.search(
                 this.modelProcessingSearchRequestDialog.requestInfo.geoJson,
-                this.modelProcessingSearchRequestDialog.requestInfo.selectedDates[0],
-                this.modelProcessingSearchRequestDialog.requestInfo.selectedDates[1]
+                dates[0], dates[1]
             );
             
-            if(searchResponse.status == "success") {
-                if(searchResponse.items?.length > 0) {
-                    const dialogStore = useDialogStore();
-                    dialogStore.showModelProcessingSearchResultsDialog();
-                    this.close();
-                } else {
-                    this.$toast.add({ 
-                        severity: "warn", 
-                        summary: "WARNING", 
-                        detail: `There is no data for the selected area and time interval!`, 
-                        life: 3000
-                    });
-                }
+            if (searchResponse.status == "success" && searchResponse.items?.length > 0) {
+                const dialogStore = useDialogStore();
+                dialogStore.showModelProcessingSearchResultsDialog();
+                this.close();
+            } else if (searchResponse.status == "success") {
+                this.$toast.add({ 
+                    severity: "warn", summary: "WARNING", 
+                    detail: "There is no data for the selected area and time interval!", life: 3000
+                });
             } else {
                 this.$toast.add({ 
-                    severity: "error", 
-                    summary: "ERROR", 
-                    detail: `Something went wrong!`, 
-                    life: 3000
+                    severity: "error", summary: "ERROR", 
+                    detail: "Something went wrong!", life: 3000
                 });
             }
+        },
 
-            this.isLoading = false;
+        async searchForCD() {
+            if (!this.datesT1?.[0] || !this.datesT1?.[1] || !this.datesT2?.[0] || !this.datesT2?.[1]) {
+                this.$toast.add({ 
+                    severity: "warn", summary: "WARNING", 
+                    detail: "Please select both T1 and T2 date ranges!", life: 3000
+                });
+                return;
+            }
+
+            if (!this.isT2AfterT1) {
+                this.$toast.add({ 
+                    severity: "warn", summary: "WARNING", 
+                    detail: "T2 must be after T1!", life: 3000
+                });
+                return;
+            }
+
+            // Căutare care acoperă ambele perioade
+            const earliestDate = this.datesT1[0];
+            const latestDate = this.datesT2[1];
+
+            const copernicusStore = useCopernicusStore();
+            let searchResponse = await copernicusStore.search(
+                this.modelProcessingSearchRequestDialog.requestInfo.geoJson,
+                earliestDate, latestDate
+            );
+
+            if (searchResponse.status == "success" && searchResponse.items?.length > 0) {
+                // Stochează perioadele T1/T2 pentru dialogul de rezultate
+                const dialogStore = useDialogStore();
+                dialogStore.selectedTaskInfo = {
+                    ...dialogStore.selectedTaskInfo,
+                    datesT1: this.datesT1,
+                    datesT2: this.datesT2
+                };
+                dialogStore.showModelProcessingSearchResultsDialog();
+                this.close();
+            } else if (searchResponse.status == "success") {
+                this.$toast.add({ 
+                    severity: "warn", summary: "WARNING", 
+                    detail: "There is no data for the selected area and time interval!", life: 3000
+                });
+            } else {
+                this.$toast.add({ 
+                    severity: "error", summary: "ERROR", 
+                    detail: "Something went wrong!", life: 3000
+                });
+            }
         }
     }
 }
