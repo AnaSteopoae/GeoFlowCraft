@@ -381,7 +381,8 @@ class AIProcessorService {
 
         // Creează arhivă ZIP cu toate rezultatele
         const resultsDir = path.dirname(result.magnitude_path);
-        const archiveName = `cd_sr_${new Date().toISOString().substring(0, 10)}_${Date.now()}`;
+        const userResultName = inputData.resultName || `cd_sr_${new Date().toISOString().substring(0, 10)}`;
+        const archiveName = userResultName.replace(/[^a-zA-Z0-9_\-]/g, '_');
         let archivePath = null;
         try {
             archivePath = await this._createResultsArchive(resultsDir, archiveName);
@@ -476,6 +477,7 @@ class AIProcessorService {
                 dir: path.join(__dirname, '../../service.ai-sr-processor/output'),
                 service: 'sr',
                 typeDetector: (filename) => {
+                    if (filename.includes('_rgb')) return null;  // Skip RGB files
                     if (filename.includes('sr_fidelity')) return 'SR Fidelity';
                     if (filename.includes('sr_balanced')) return 'SR Balanced';
                     if (filename.includes('sr_sharp')) return 'SR Sharp';
@@ -524,13 +526,15 @@ class AIProcessorService {
                 );
 
                 for (const filename of productFiles) {
+                    const type = typeDetector(filename);
+                    if (!type) continue;  // Skip files rejected by typeDetector (e.g. RGB)
                     const filePath = path.join(dir, filename);
                     const stats = fs.statSync(filePath);
                     results.push({
                         filename: filename,
                         path: filePath,
                         size: stats.size,
-                        type: typeDetector(filename),
+                        type: type,
                         service: service,
                         createdAt: stats.birthtime,
                         modifiedAt: stats.mtime
@@ -561,6 +565,8 @@ class AIProcessorService {
                 const tifFiles = files.filter(file => file.endsWith('.tif') || file.endsWith('.zip'));
 
                 for (const filename of tifFiles) {
+                    const type = typeDetector(filename);
+                    if (!type) continue;  // Skip files rejected by typeDetector (e.g. RGB
                     let productId = null;
 
                     const s2Match = filename.match(/(S2[AB]_MSIL[12][AC]_\d+T\d+_[^_]+_[^_]+_[^_]+_[^.]+)/);
@@ -583,7 +589,7 @@ class AIProcessorService {
                         filename: filename,
                         path: filePath,
                         size: stats.size,
-                        type: typeDetector(filename),
+                        type: type,
                         service: service,
                         createdAt: stats.birthtime,
                         modifiedAt: stats.mtime

@@ -24,6 +24,12 @@ export default defineStore('dialog', {
         taskSelectorVisible: false,
         selectedTaskInfo: null,  // { task, cdSource, srMode }
         existingResultsDialogVisible: false,
+        cdFlowStep: null,         // 'select_t1' | 'select_t2' | null
+        cdSelectedSceneT1: null,  // scena selectată pentru T1
+        cdSelectedSceneT2: null,  // scena selectată pentru T2
+        cdDatesT1: null,          // perioadă T1
+        cdDatesT2: null,          // perioadă T2
+        cdSelectedSceneNew: null,
     }),
     actions: {
         // DataSetCreateDialog
@@ -102,6 +108,15 @@ export default defineStore('dialog', {
         },
         hideExistingResultsDialog() {
             this.existingResultsDialogVisible = false;
+        },
+        resetCDFlow() {
+            tthis.cdFlowStep = null;
+            this.cdSelectedSceneT1 = null;
+            this.cdSelectedSceneT2 = null;
+            this.cdDatesT1 = null;
+            this.cdDatesT2 = null;
+            this.cdSelectedSceneExisting = null;
+            this.cdSelectedSceneNew = null;
         },
     }
 })

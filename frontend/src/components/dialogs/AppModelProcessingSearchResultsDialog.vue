@@ -1,5 +1,6 @@
 <template>
-    <PrimeDialog v-model:visible="modelProcessingSearchResultsDialog.visible" header="Search results" :closable="false">
+    <PrimeDialog v-model:visible="modelProcessingSearchResultsDialog.visible" 
+    :header="isCDStepMode ? cdStepHeader : 'Search results'" :closable="false">
         <div class="mb-4">
             <div v-if="areaItems?.length > 0 && compatibleAreaItems.length === 0" class="mb-3 p-3 bg-yellow-500/20 border border-yellow-500 rounded-lg">
                 <div class="flex items-center gap-2">
@@ -9,6 +10,27 @@
                         The selected AI model requires Sentinel-2 images, but only other satellite data was found.
                         Try searching for a different area or time period.
                     </div>
+                    <!-- CD Step indicator -->
+            <div v-if="isCDStepMode" class="mb-3 p-3 rounded-lg" 
+                 :style="{ 
+                     background: cdFlowStep === 'select_t1' ? 'rgba(239, 68, 68, 0.1)' : 'rgba(34, 197, 94, 0.1)',
+                     border: cdFlowStep === 'select_t1' ? '1px solid rgba(239, 68, 68, 0.3)' : '1px solid rgba(34, 197, 94, 0.3)'
+                 }">
+                <div class="flex items-center gap-2 text-sm">
+                    <span class="inline-block w-6 h-6 rounded-full text-center text-sm leading-6 font-bold" 
+                          :style="{ 
+                              background: cdFlowStep === 'select_t1' ? 'rgba(239, 68, 68, 0.3)' : 'rgba(34, 197, 94, 0.3)',
+                              color: cdFlowStep === 'select_t1' ? '#fca5a5' : '#86efac'
+                          }">
+                        {{ cdFlowStep === 'select_t1' ? '1' : '2' }}
+                    </span>
+                    <span style="color: #e2e8f0;">
+                        {{ cdFlowStep === 'select_t1' 
+                            ? 'Select ONE scene for the BEFORE period (T1)' 
+                            : 'Select ONE scene for the AFTER period (T2)' }}
+                    </span>
+                </div>
+            </div>
                 </div>
             </div>
             
@@ -187,7 +209,20 @@ export default {
             }
             
             return this.areaItems;
-        }
+        },
+        cdFlowStep() {
+            return useDialogStore().cdFlowStep;
+        },
+
+        isCDStepMode() {
+            return this.cdFlowStep === 'select_t1' || this.cdFlowStep === 'select_t2';
+        },
+
+        cdStepHeader() {
+            if (this.cdFlowStep === 'select_t1') return 'Select scene for T1 (older date)';
+            if (this.cdFlowStep === 'select_t2') return 'Select scene for T2 (newer date)';
+            return 'Search results';
+        },
     },
     methods: {
         showAreaItemOnMap(item) {
@@ -248,6 +283,77 @@ export default {
         async process() {
             const selectedItems = this.compatibleAreaItems.filter(item => item.selected);
             const aiAgentStore = useAIAgentStore();
+            const dialogStore = useDialogStore();
+
+            // ── CD Step Mode: selectare T1 sau T2 ──
+            if (this.isCDStepMode) {
+                if (selectedItems.length !== 1) {
+                    this.$toast.add({ 
+                        severity: "warn", summary: "WARNING", 
+                        detail: "Please select exactly 1 scene!", life: 3000
+                    });
+                    return;
+                }
+
+                if (this.cdFlowStep === 'select_t1') {
+                    // Salvează T1, caută T2
+                    dialogStore.cdSelectedSceneT1 = selectedItems[0];
+                    this.close();
+                    
+                    this.$toast.add({ 
+                        severity: "success", summary: "T1 Selected", 
+                        detail: `T1: ${selectedItems[0].id.substring(0, 40)}`, life: 3000
+                    });
+
+                    // Căutare pentru T2
+                    this.$toast.add({ 
+                        severity: "info", summary: "Searching T2", 
+                        detail: "Searching satellite images for the second period...", life: 3000
+                    });
+
+                    const copernicusStore = useCopernicusStore();
+                    const searchResponse = await copernicusStore.search(
+                        this.modelProcessingSearchRequestDialog.requestInfo.geoJson,
+                        dialogStore.cdDatesT2[0], dialogStore.cdDatesT2[1]
+                    );
+
+                    if (searchResponse.status == "success" && searchResponse.items?.length > 0) {
+                        dialogStore.cdFlowStep = 'select_t2';
+                        dialogStore.showModelProcessingSearchResultsDialog();
+                    } else {
+                        this.$toast.add({ 
+                            severity: "warn", summary: "WARNING", 
+                            detail: "No data found for T2 period!", life: 3000
+                        });
+                        dialogStore.resetCDFlow();
+                    }
+                    return;
+                }
+
+                if (this.cdFlowStep === 'select_t2') {
+                    // Salvează T2, continuă cu procesare
+                    dialogStore.cdSelectedSceneT2 = selectedItems[0];
+                    
+                    this.$toast.add({ 
+                        severity: "success", summary: "T2 Selected", 
+                        detail: `T2: ${selectedItems[0].id.substring(0, 40)}`, life: 3000
+                    });
+
+                    // Generează nume implicit
+                    const t1 = dialogStore.cdSelectedSceneT1;
+                    const t2 = dialogStore.cdSelectedSceneT2;
+                    const t1Tile = t1.id.match(/T\d{2}[A-Z]{3}/)?.[0] || '';
+                    const t1Date = t1.id.match(/(\d{8})T/)?.[1] || '';
+                    const t2Date = t2.id.match(/(\d{8})T/)?.[1] || '';
+                    const taskLabel = aiAgentStore.selectedAgent === 'cd-processor' ? 'CD-SR' : 'CD-CHM';
+                    
+                    this.resultName = `${taskLabel} ${t1Tile} ${t1Date}-${t2Date}`.trim();
+                    this.pendingProcessItems = [t1, t2];
+                    this.pendingProcessType = 'cd';
+                    this.showNameDialog = true;
+                    return;
+                }
+            }
             
             if (selectedItems.length === 0) {
                 this.$toast.add({ 
@@ -266,6 +372,29 @@ export default {
                     detail: "No AI model selected!", 
                     life: 3000
                 });
+                return;
+            }
+
+             // Mix mode: selectare 1 scenă nouă, apoi alege din rezultate existente
+            const dialogStore2 = useDialogStore();
+            if (dialogStore2.selectedTaskInfo?.cdSource === 'mix') {
+                if (selectedItems.length !== 1) {
+                    this.$toast.add({ 
+                        severity: "warn", summary: "WARNING", 
+                        detail: "Please select exactly 1 scene for mix mode!", life: 3000
+                    });
+                    return;
+                }
+
+                dialogStore2.cdSelectedSceneNew = selectedItems[0];
+                this.close();
+
+                this.$toast.add({ 
+                    severity: "info", summary: "Mix mode", 
+                    detail: "Now select an existing result to compare with.", life: 5000
+                });
+
+                dialogStore2.existingResultsDialogVisible = true;
                 return;
             }
 
@@ -357,10 +486,12 @@ export default {
             this.showNameDialog = false;
             
             const aiAgentStore = useAIAgentStore();
+            const dialogStore = useDialogStore();
             aiAgentStore.resultName = this.resultName.trim();
             
             if (this.pendingProcessType === 'cd') {
                 await this.processChangeDetection(this.pendingProcessItems);
+                dialogStore.resetCDFlow();  // Resetează starea CD
             } else {
                 this.$toast.add({ 
                     severity: "info", 

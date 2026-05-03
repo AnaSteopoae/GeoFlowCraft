@@ -86,11 +86,7 @@ export default {
             // CD cu "existing" → deschide dialogul de rezultate existente
             if ((taskInfo.task === 'cd-processor' || taskInfo.task === 'cd-chm-processor') 
                 && taskInfo.cdSource === 'existing') {
-                // Emite event către HomeView pentru a deschide ExistingResultsDialog
-                this.$emit('open-existing-results', {
-                    type: taskInfo.task === 'cd-processor' ? 'sr' : 'chm',
-                    max: 2
-                });
+                dialogStore.existingResultsDialogVisible = true;
                 return;
             }
             dialogStore.showConfirmDialog({

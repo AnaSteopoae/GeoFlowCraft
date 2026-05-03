@@ -304,38 +304,39 @@ export default {
                 return;
             }
 
-            // Căutare care acoperă ambele perioade
-            const earliestDate = this.datesT1[0];
-            const latestDate = this.datesT2[1];
+            // Salvează perioadele în store
+            const dialogStore = useDialogStore();
+            dialogStore.cdDatesT1 = this.datesT1;
+            dialogStore.cdDatesT2 = this.datesT2;
+
+            // Pas 1: Căutare pentru T1
+            this.$toast.add({ 
+                severity: "info", summary: "Searching T1", 
+                detail: "Searching satellite images for the first period...", life: 3000
+            });
 
             const copernicusStore = useCopernicusStore();
             let searchResponse = await copernicusStore.search(
                 this.modelProcessingSearchRequestDialog.requestInfo.geoJson,
-                earliestDate, latestDate
+                this.datesT1[0], this.datesT1[1]
             );
 
             if (searchResponse.status == "success" && searchResponse.items?.length > 0) {
-                // Stochează perioadele T1/T2 pentru dialogul de rezultate
-                const dialogStore = useDialogStore();
-                dialogStore.selectedTaskInfo = {
-                    ...dialogStore.selectedTaskInfo,
-                    datesT1: this.datesT1,
-                    datesT2: this.datesT2
-                };
+                dialogStore.cdFlowStep = 'select_t1';
                 dialogStore.showModelProcessingSearchResultsDialog();
                 this.close();
             } else if (searchResponse.status == "success") {
                 this.$toast.add({ 
                     severity: "warn", summary: "WARNING", 
-                    detail: "There is no data for the selected area and time interval!", life: 3000
+                    detail: "No data found for T1 period!", life: 3000
                 });
             } else {
                 this.$toast.add({ 
                     severity: "error", summary: "ERROR", 
-                    detail: "Something went wrong!", life: 3000
+                    detail: "Search failed!", life: 3000
                 });
             }
-        }
+        },
     }
 }
 </script>

@@ -6,7 +6,6 @@
       <AppDataSetList class="border-b-2 border-gray-300" />
       <!-- List of visible datalayers -->
       <AppDataLayerList />
-      <AppNavBar @open-existing-results="onOpenExistingResults" />
     </div>
     <!-- Dialogs -->
     <AppConfirmDialog @confirm-yes="onConfirmYes" @confirm-no="onConfirmNo" />
@@ -22,6 +21,37 @@
     :resultType="existingResultsType"
     @results-selected="onExistingResultsSelected"
     />
+     <!-- CD Name dialog for existing results -->
+    <PrimeDialog 
+        v-model:visible="showCDNameDialog" 
+        modal 
+        header="Name your result"
+        :style="{ width: '25rem' }"
+    >
+        <div class="flex flex-col gap-3 my-2">
+            <div class="text-sm text-gray-400">
+                Choose a name for this Change Detection result:
+            </div>
+            <PrimeInputText 
+                v-model="cdResultName" 
+                placeholder="e.g. CD Brașov Feb-Apr 2026"
+                class="w-full"
+                @keyup.enter="startCDFromExisting"
+            />
+        </div>
+        <template #footer>
+            <div class="flex justify-between w-full">
+                <PrimeButton label="Cancel" icon="pi pi-times" severity="secondary" @click="showCDNameDialog = false" />
+                <PrimeButton 
+                    label="Start processing" 
+                    icon="pi pi-play" 
+                    severity="success"
+                    :disabled="!cdResultName || cdResultName.trim().length === 0"
+                    @click="startCDFromExisting" 
+                />
+            </div>
+        </template>
+    </PrimeDialog>
     <PrimeToast />
   </div>
 
@@ -33,6 +63,8 @@ import useMapStore from "@/stores/map";
 import useDialogStore from "@/stores/dialog";
 import useDataSetStore from "@/stores/dataSet";
 import useDataLayerStore from "@/stores/dataLayer";
+import useAIAgentStore from "@/stores/aiAgent";
+import useCopernicusStore from "@/stores/copernicus";
 
 import AppConfirmDialog from "@/components/dialogs/AppConfirmDialog.vue";
 import AppDataSetList from "../components/AppDataSetList.vue";
@@ -60,16 +92,34 @@ export default {
   data() {
     return {
       pendingModelProcessingFeature: null,
-      showExistingResults: false,
-      existingResultsType: 'sr',
-      existingResultsMax: 2
+      // showExistingResults: false,
+      // existingResultsType: 'sr',
+      // existingResultsMax: 2
+      showCDNameDialog: false,
+      cdResultName: '',
+      pendingCDSelection: null
     }
   },
   mounted() {
     const mapStore = useMapStore();
     mapStore.initialize();
   },
-  computed: {},
+  computed: {
+    showExistingResults: {
+        get() { return useDialogStore().existingResultsDialogVisible; },
+        set(val) { useDialogStore().existingResultsDialogVisible = val; }
+    },
+    existingResultsType() {
+        const taskInfo = useDialogStore().selectedTaskInfo;
+        if (!taskInfo) return 'sr';
+        return (taskInfo.task === 'cd-chm-processor') ? 'chm' : 'sr';
+    },
+    existingResultsMax() {
+        const taskInfo = useDialogStore().selectedTaskInfo;
+        if (!taskInfo) return 2;
+        return taskInfo.cdSource === 'mix' ? 1 : 2;
+    }
+  },
   methods: {
     onOpenExistingResults({ type, max }) {
     this.existingResultsType = type;
@@ -184,12 +234,150 @@ export default {
       mapStore.removeDrawLayer();
       this.pendingModelProcessingFeature = null;
     },
-    onExistingResultsSelected(selection) {
-    console.log('Selected existing results:', selection);
-    // TODO: procesează CD cu rezultatele selectate
-    // selection.type === 'pair' → selection.t1, selection.t2
-    // selection.type === 'single' → selection.result
-    }
+    async onExistingResultsSelected(selection) {
+        const dialogStore = useDialogStore();
+        const taskInfo = dialogStore.selectedTaskInfo;
+
+        if (selection.type === 'pair') {
+            const taskLabel = taskInfo.task === 'cd-processor' ? 'CD-SR' : 'CD-CHM';
+            this.cdResultName = `${taskLabel} existing ${Date.now().toString(36)}`;
+            this.pendingCDSelection = selection;
+            this.showCDNameDialog = true;
+
+        } else if (selection.type === 'single') {
+             // CD "mix" — o scenă din rezultate existente + o scenă nouă
+            const newScene = dialogStore.cdSelectedSceneNew;
+
+            if (!newScene) {
+                // Fallback: dacă nu e scena nouă salvată, activează draw mode
+                dialogStore.cdSelectedSceneExisting = selection.result;
+                dialogStore.showConfirmDialog({
+                    title: "Draw area for the new scene",
+                    message: "Now draw the area on the map for the new scene.",
+                    noButtonText: "Cancel",
+                    yesButtonText: "Continue",
+                    event: "MODEL_PROCESSING_ACTIVATE_DRAW_MODE"
+                });
+                return;
+            }
+
+            // Ambele scene sunt selectate — deschide name dialog
+            const taskInfo = dialogStore.selectedTaskInfo;
+            const taskLabel = taskInfo.task === 'cd-processor' ? 'CD-SR' : 'CD-CHM';
+            this.cdResultName = `${taskLabel} mix ${Date.now().toString(36)}`;
+            this.pendingCDSelection = {
+                type: 'mix',
+                existingResult: selection.result,
+                newScene: newScene
+            };
+            this.showCDNameDialog = true;
+        }
+    },
+
+    async startCDFromExisting() {
+        this.showCDNameDialog = false;
+        const dialogStore = useDialogStore();
+        const aiAgentStore = useAIAgentStore();
+        const selection = this.pendingCDSelection;
+
+        aiAgentStore.setSelectedAgent(dialogStore.selectedTaskInfo.task);
+        aiAgentStore.resultName = this.cdResultName.trim();
+
+        this.$toast.add({
+            severity: "info", summary: "Processing",
+            detail: `Starting "${this.cdResultName}"...`, life: 5000
+        });
+
+        try {
+            let result;
+
+            if (selection.type === 'pair') {
+                // CD "existing" — ambele din rezultate procesate
+                result = await aiAgentStore.processWithSelectedAgent({
+                    sr_t1_path: selection.t1.path,
+                    sr_t2_path: selection.t2.path,
+                    mode: 'fidelity',
+                    threshold_method: 'otsu',
+                    resultName: this.cdResultName.trim()
+                });
+
+            } else if (selection.type === 'mix') {
+                // CD "mix" — o scenă existentă + o scenă nouă
+                const existingPath = selection.existingResult.path;
+                const newItem = selection.newScene;
+                
+                // Descarcă scena nouă
+                const copernicusStore = useCopernicusStore();
+                
+                this.$toast.add({
+                    severity: "info", summary: "Downloading",
+                    detail: "Downloading new scene...", life: 10000
+                });
+
+                const dl = await copernicusStore.downloadImages([newItem.stac_item]);
+                
+                let downloadCompleted = false;
+                let downloadResult = null;
+                for (let i = 0; i < 60; i++) {
+                    await new Promise(r => setTimeout(r, 5000));
+                    const status = await copernicusStore.checkDownloadStatus(dl.task_id);
+                    if (status.status === 'completed') { downloadResult = status; downloadCompleted = true; break; }
+                    if (status.status === 'failed') throw new Error('Download failed');
+                }
+                if (!downloadCompleted) throw new Error('Download timeout');
+
+                const s2Path = downloadResult.files ? downloadResult.files[0] : `${newItem.id}/${newItem.id}.zip`;
+                
+                const dateMatch = newItem.id.match(/(\d{8})T/);
+                const targetDate = dateMatch 
+                    ? `${dateMatch[1].substring(0,4)}-${dateMatch[1].substring(4,6)}-${dateMatch[1].substring(6,8)}`
+                    : newItem.datetime?.substring(0, 10);
+
+                // Bbox din zona desenată
+                const mapStore = useMapStore();
+                const geoJson = dialogStore.modelProcessingSearchRequestDialog.requestInfo?.geoJson;
+                let bbox = null;
+                if (geoJson) {
+                    let coords;
+                    if (geoJson.type === 'Polygon') coords = geoJson.coordinates[0];
+                    else if (geoJson.type === 'FeatureCollection') coords = geoJson.features[0]?.geometry?.coordinates[0];
+                    if (coords) {
+                        const lons = coords.map(c => c[0]);
+                        const lats = coords.map(c => c[1]);
+                        bbox = [Math.min(...lons), Math.min(...lats), Math.max(...lons), Math.max(...lats)];
+                    }
+                }
+
+                this.$toast.add({
+                    severity: "info", summary: "Processing",
+                    detail: "Applying SR + Change Detection...", life: 30000
+                });
+
+                // Existentul e T1 (mai vechi), noul e T2 (mai recent)
+                result = await aiAgentStore.processWithSelectedAgent({
+                    sr_t1_path: existingPath,
+                    scene_t2: { s2_path: s2Path, bbox: bbox, target_date: targetDate },
+                    mode: 'fidelity',
+                    threshold_method: 'otsu',
+                    resultName: this.cdResultName.trim()
+                });
+            }
+
+            const stats = result.data.statistics;
+            this.$toast.add({
+                severity: "success", summary: "Change Detection Complete",
+                detail: `Changes: ${stats.changed_area_ha} ha (${stats.change_percentage}%)`, life: 10000
+            });
+
+            dialogStore.resetCDFlow();
+
+        } catch (error) {
+            this.$toast.add({
+                severity: "error", summary: "ERROR",
+                detail: `CD failed: ${error.message}`, life: 5000
+            });
+        }
+    },
   }
 }
 </script>

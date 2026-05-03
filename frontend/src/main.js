@@ -20,6 +20,7 @@ import Tooltip from 'primevue/tooltip';
 import Dialog from 'primevue/dialog';
 import Select from 'primevue/select';
 import DatePicker from 'primevue/datepicker';
+import RadioButton from 'primevue/radiobutton';
 
 import 'primeicons/primeicons.css'
 
@@ -50,6 +51,7 @@ app.component("PrimeFileUpload", FileUpload);
 app.component("PrimeToast", Toast);
 app.component("PrimeListBox", ListBox);
 app.component("PrimeDialog", Dialog);
+app.component("PrimeRadioButton", RadioButton);
 app.directive("tooltip", Tooltip);
 
 app.use(createPinia());

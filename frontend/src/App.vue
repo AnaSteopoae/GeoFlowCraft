@@ -1,7 +1,7 @@
 <template>
   <div class="flex flex-col w-full h-full">
     <!-- Navbar -->
-    <AppNavBar/>
+    <AppNavBar @open-existing-results="onOpenExistingResults"/>
     <!-- Page content -->
     <RouterView class="w-full h-full" />
   </div>
@@ -10,7 +10,7 @@
 <script>
 import { RouterLink, RouterView } from 'vue-router'
 import AppNavBar from "@/components/AppNavBar.vue";
-
+import useDialogStore from "@/stores/dialog";
 
 export default {
   name: "App",
@@ -19,7 +19,13 @@ export default {
     AppNavBar
   },
   computed: {},
-  methods: {}
+  methods: {
+    onOpenExistingResults() {
+      // Handle the event when existing results are opened
+      const dialogStore = useDialogStore();
+      dialogStore.existingResultsDialogVisible = true;
+    }
+  }
 }
 
 </script>
