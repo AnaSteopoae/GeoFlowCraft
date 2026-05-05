@@ -97,6 +97,7 @@ export default defineStore("map", {
             
             if(visible == true) {
                 this.visibleLayers.push(layerInfo.id);
+                this._saveVisibleLayers(); 
             }
             
             this.map.addLayer(layer);
@@ -111,6 +112,7 @@ export default defineStore("map", {
 
             existingLayer.setVisible(true);
             this.visibleLayers.push(layerId);
+            this._saveVisibleLayers(); 
         },
         hideLayer(layerId) {
             let existingLayer = this.map.getLayers().getArray().find(
@@ -124,6 +126,7 @@ export default defineStore("map", {
             let indexOfVisibleLayer = this.visibleLayers.indexOf(layerId);
 
             this.visibleLayers.splice(indexOfVisibleLayer, 1);
+            this._saveVisibleLayers();
         },
         addDrawLayer(feature) {
             const fill = new StyleFill({
@@ -296,6 +299,31 @@ export default defineStore("map", {
             let geoJson = JSON.parse(geoJsonString);
 
             return geoJson;
-        }
+        },
+        _saveVisibleLayers() {
+            try {
+                localStorage.setItem('gfc_visible_layers', JSON.stringify(this.visibleLayers));
+            } catch (e) {
+                console.warn('Could not save visible layers:', e);
+            }
+        },
+
+        async restoreVisibleLayers() {
+            try {
+                const saved = localStorage.getItem('gfc_visible_layers');
+                if (!saved) return;
+                
+                const layerIds = JSON.parse(saved);
+                for (const layerId of layerIds) {
+                    try {
+                        await this.addLayer({ id: layerId }, true);
+                    } catch (e) {
+                        console.warn(`Could not restore layer ${layerId}:`, e);
+                    }
+                }
+            } catch (e) {
+                console.warn('Could not restore visible layers:', e);
+            }
+        },
     }
 })

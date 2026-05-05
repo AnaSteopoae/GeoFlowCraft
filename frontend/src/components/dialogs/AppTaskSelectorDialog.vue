@@ -4,6 +4,7 @@
         modal 
         header="Choose processing task"
         :style="{ width: '55rem' }"
+        :closable="false"
         :breakpoints="{ '1199px': '80vw', '575px': '95vw' }"
     >
         <div class="task-cards">
@@ -13,9 +14,6 @@
                 :class="{ selected: selectedTask === 'sr-processor' }"
                 @click="selectTask('sr-processor')"
             >
-                <div class="task-icon">
-                    <i class="pi pi-image" style="font-size: 2rem; color: rgb(20 184 166);"></i>
-                </div>
                 <div class="task-title">Super Resolution</div>
                 <div class="task-subtitle">Enhance satellite imagery from 10m to 2.5m using SAR-optical fusion</div>
                 <div class="task-badge">1 scene</div>
@@ -27,9 +25,6 @@
                 :class="{ selected: selectedTask === 'ch-processor' }"
                 @click="selectTask('ch-processor')"
             >
-                <div class="task-icon">
-                    <i class="pi pi-sun" style="font-size: 2rem; color: rgb(132 204 22);"></i>
-                </div>
                 <div class="task-title">Canopy Height</div>
                 <div class="task-subtitle">Estimate vegetation canopy height using the Global CHM model</div>
                 <div class="task-badge">1 scene (L2A)</div>
@@ -41,9 +36,6 @@
                 :class="{ selected: selectedTask === 'cd-processor' }"
                 @click="selectTask('cd-processor')"
             >
-                <div class="task-icon">
-                    <i class="pi pi-arrows-h" style="font-size: 2rem; color: rgb(239 68 68);"></i>
-                </div>
                 <div class="task-title">Change Detection (Urban)</div>
                 <div class="task-subtitle">Detect urban and land-use changes using CVA on super-resolved imagery</div>
                 <div class="task-badge">2 scenes</div>
@@ -55,9 +47,6 @@
                 :class="{ selected: selectedTask === 'cd-chm-processor' }"
                 @click="selectTask('cd-chm-processor')"
             >
-                <div class="task-icon">
-                    <i class="pi pi-chart-line" style="font-size: 2rem; color: rgb(34 197 94);"></i>
-                </div>
                 <div class="task-title">Deforestation Detection</div>
                 <div class="task-subtitle">Monitor forest canopy changes using ΔCHM analysis on two time periods</div>
                 <div class="task-badge">2 CHM scenes</div>
@@ -244,10 +233,6 @@ export default {
     &.selected {
         border-color: rgb(20 184 166);
         background: rgba(20, 184, 166, 0.1);
-    }
-
-    .task-icon {
-        margin-bottom: 0.75rem;
     }
 
     .task-title {

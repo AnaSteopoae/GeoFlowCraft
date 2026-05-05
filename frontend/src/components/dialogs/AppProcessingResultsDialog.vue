@@ -79,23 +79,6 @@
                         </template>
                     </Column>
                 </DataTable>
-
-                <div class="actions-footer">
-                    <Button 
-                        label="Download All" 
-                        icon="pi pi-download" 
-                        class="p-button-outlined"
-                        @click="downloadAll"
-                    />
-                    <Button 
-                        label="View on Map" 
-                        icon="pi pi-map" 
-                        class="p-button-primary"
-                        @click="viewOnMap"
-                        :disabled="true"
-                        v-tooltip.top="'Feature coming soon'"
-                    />
-                </div>
             </div>
 
             <!-- No results -->
@@ -111,10 +94,6 @@
                 </p>
             </div>
         </div>
-
-        <template #footer>
-            <Button label="Close" icon="pi pi-times" @click="close" class="p-button-text" />
-        </template>
     </Dialog>
 </template>
 

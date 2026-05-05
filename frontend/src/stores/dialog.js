@@ -30,6 +30,14 @@ export default defineStore('dialog', {
         cdDatesT1: null,          // perioadă T1
         cdDatesT2: null,          // perioadă T2
         cdSelectedSceneNew: null,
+        processingProgress: {
+            visible: false,
+            step: 0,
+            steps: [],
+            label: '',
+            detail: ''
+        },
+        cdSelectedSceneExisting: null,
     }),
     actions: {
         // DataSetCreateDialog
@@ -94,12 +102,6 @@ export default defineStore('dialog', {
         hideTaskSelector() {
             this.taskSelectorVisible = false;
         },
-        showTaskSelector() {
-            this.taskSelectorVisible = true;
-        },
-        hideTaskSelector() {
-            this.taskSelectorVisible = false;
-        },
         setSelectedTaskInfo(taskInfo) {
             this.selectedTaskInfo = taskInfo;
         },
@@ -110,13 +112,30 @@ export default defineStore('dialog', {
             this.existingResultsDialogVisible = false;
         },
         resetCDFlow() {
-            tthis.cdFlowStep = null;
+            this.cdFlowStep = null;
             this.cdSelectedSceneT1 = null;
             this.cdSelectedSceneT2 = null;
             this.cdDatesT1 = null;
             this.cdDatesT2 = null;
             this.cdSelectedSceneExisting = null;
             this.cdSelectedSceneNew = null;
+        },
+        showProcessingProgress(steps) {
+            this.processingProgress = {
+                visible: true,
+                step: 0,
+                steps: steps,
+                label: steps[0] || 'Processing...',
+                detail: ''
+            };
+        },
+        updateProcessingProgress(step, detail = '') {
+            this.processingProgress.step = step;
+            this.processingProgress.label = this.processingProgress.steps[step] || 'Processing...';
+            this.processingProgress.detail = detail;
+        },
+        hideProcessingProgress() {
+            this.processingProgress.visible = false;
         },
     }
 })

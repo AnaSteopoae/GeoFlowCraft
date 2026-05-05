@@ -191,7 +191,7 @@ class AIProcessorService {
         // ── Pas 4: Trimite la serviciul SR ──
         console.log(`[SR] Pas 4: Inferență SR (mode=${mode})...`);
         
-        const srResult = await this.sendToSRService(stackedPath, mode, alpha);
+        const srResult = await this.sendToSRService(stackedPath, mode, alpha, inputData.resultName);
         
         console.log(`[SR] Complet! Output: ${srResult.outputPath}`);
 
@@ -258,7 +258,7 @@ class AIProcessorService {
     /**
      * Trimite GeoTIFF-ul stacked la serviciul SR via multipart/form-data
      */
-    async sendToSRService(stackedPath, mode, alpha) {
+    async sendToSRService(stackedPath, mode, alpha, resultName = null) {
         const agent = aiConfig.aiAgents['sr-processor'];
         const url = `${agent.url}${agent.endpoints.predict}`;
 
@@ -294,7 +294,10 @@ class AIProcessorService {
             fs.mkdirSync(outputDir, { recursive: true });
         }
 
-        const outputFilename = `sr_${mode}_${path.basename(stackedPath)}`;
+        const cleanName = resultName?.replace(/[^a-zA-Z0-9_\-]/g, '_') || '';
+        const outputFilename = cleanName 
+            ? `${cleanName}.tif`
+            : `sr_${mode}_${path.basename(stackedPath)}`;
         const outputPath = path.join(outputDir, outputFilename);
         fs.writeFileSync(outputPath, response.data);
 
@@ -477,7 +480,8 @@ class AIProcessorService {
                 dir: path.join(__dirname, '../../service.ai-sr-processor/output'),
                 service: 'sr',
                 typeDetector: (filename) => {
-                    if (filename.includes('_rgb')) return null;  // Skip RGB files
+                    if (filename.includes('_rgb')) return null;   // Exclude RGB
+                    if (filename.endsWith('.zip')) return null;    // Exclude ZIP-uri CD
                     if (filename.includes('sr_fidelity')) return 'SR Fidelity';
                     if (filename.includes('sr_balanced')) return 'SR Balanced';
                     if (filename.includes('sr_sharp')) return 'SR Sharp';
@@ -489,12 +493,7 @@ class AIProcessorService {
                 service: 'cd-sr',
                 typeDetector: (filename) => {
                     if (filename.endsWith('.zip')) return 'CD Results Archive';
-                    if (filename.includes('cva_magnitude')) return 'CVA Magnitude';
-                    if (filename.includes('delta_ndvi')) return 'Delta NDVI';
-                    if (filename.includes('change_mask')) return 'Change Mask';
-                    if (filename.includes('ndvi_t1')) return 'NDVI T1';
-                    if (filename.includes('ndvi_t2')) return 'NDVI T2';
-                    return 'CD-SR Output';
+                    return null;  // Doar ZIP-uri, nu TIF-uri individuale
                 }
             },
             {
@@ -502,11 +501,7 @@ class AIProcessorService {
                 service: 'cd-chm',
                 typeDetector: (filename) => {
                     if (filename.endsWith('.zip')) return 'CD Results Archive';
-                    if (filename.includes('delta_chm')) return 'Delta CHM';
-                    if (filename.includes('deforestation')) return 'Deforestation Mask';
-                    if (filename.includes('regrowth')) return 'Regrowth Mask';
-                    if (filename.includes('classification')) return 'Change Classification';
-                    return 'CD-CHM Output';
+                    return null;  // Doar ZIP-uri
                 }
             }
         ];
@@ -569,13 +564,13 @@ class AIProcessorService {
                     if (!type) continue;  // Skip files rejected by typeDetector (e.g. RGB
                     let productId = null;
 
-                    const s2Match = filename.match(/(S2[AB]_MSIL[12][AC]_\d+T\d+_[^_]+_[^_]+_[^_]+_[^.]+)/);
+                    const s2Match = filename.match(/(S2[ABC]_MSIL[12][AC]_\d+T\d+_[^_]+_[^_]+_[^_]+_[^.]+)/);
                     if (s2Match) {
                         productId = s2Match[1];
                     } else if (service === 'cd-sr' || service === 'cd-chm') {
                         productId = `change_detection_${service}`;
                     } else {
-                        productId = 'other';
+                        productId = filename.replace(/\.(tif|zip)$/, '');
                     }
 
                     if (!groupedResults[productId]) {

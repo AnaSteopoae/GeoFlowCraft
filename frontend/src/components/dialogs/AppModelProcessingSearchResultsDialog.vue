@@ -94,7 +94,7 @@
         </div>
         <div class="flex justify-between items-center">
             <PrimeButton label="Close" icon="pi pi-times" severity="danger"
-                @click="close"
+                @click="close(true)"
             ></PrimeButton>
             <PrimeButton label="Process" icon="pi pi-microchip" severity="success" 
                 @click="process"
@@ -156,6 +156,7 @@ import useMapStore from "@/stores/map";
 import useAIAgentStore from "@/stores/aiAgent";
 import AppProcessingResultsDialog from "@/components/dialogs/AppProcessingResultsDialog.vue";
 import InputText from 'primevue/inputtext';
+import AppProcessingProgressDialog from "@/components/dialogs/AppProcessingProgressDialog.vue";
 
 import moment from 'moment';
 import { transformExtent } from 'ol/proj';
@@ -164,7 +165,8 @@ export default {
     name: "AppModelProcessingSearchResultsDialog",
     components: {
         AppProcessingResultsDialog,
-        InputText
+        InputText,
+        AppProcessingProgressDialog
     },
     data() {
         return {
@@ -173,7 +175,7 @@ export default {
             showNameDialog: false,
             resultName: '',
             pendingProcessItems: null,
-            pendingProcessType: null
+            pendingProcessType: null,
         }
     },
     computed: {
@@ -484,6 +486,7 @@ export default {
          */
         async confirmProcessing() {
             this.showNameDialog = false;
+            this.cleanupMapOverlays(); 
             
             const aiAgentStore = useAIAgentStore();
             const dialogStore = useDialogStore();
@@ -491,36 +494,41 @@ export default {
             
             if (this.pendingProcessType === 'cd') {
                 await this.processChangeDetection(this.pendingProcessItems);
-                dialogStore.resetCDFlow();  // Resetează starea CD
+                dialogStore.resetCDFlow();
             } else {
-                this.$toast.add({ 
-                    severity: "info", 
-                    summary: "Processing", 
-                    detail: `Starting "${this.resultName}"...`, 
-                    life: 5000
-                });
+                this.close();
+                
+                // Progress pentru SR
+                 if (aiAgentStore.selectedAgent === 'sr-processor') {
+                    this.startProgress([
+                        'Downloading Sentinel-2 scene',
+                        'Processing SR pipeline (S1 download, co-registration, inference)',
+                        'Publishing to map'
+                    ]);
+                } else {
+                    this.startProgress([
+                        'Downloading Sentinel-2 scene',
+                        'AI Processing',
+                        'Publishing to map'
+                    ]);
+                }
 
                 try {
-                    this.close();
-
                     for (const item of this.pendingProcessItems) {
                         await this.processImage(item, aiAgentStore.selectedAgent);
                     }
 
+                    this.finishProgress();
                     this.$toast.add({ 
-                        severity: "success", 
-                        summary: "SUCCESS", 
-                        detail: `"${this.resultName}" processed successfully!`, 
-                        life: 5000
+                        severity: "success", summary: "SUCCESS", 
+                        detail: `"${this.resultName}" processed successfully!`, life: 5000
                     });
-
                 } catch (error) {
+                    this.finishProgress();
                     console.error('Error processing images:', error);
                     this.$toast.add({ 
-                        severity: "error", 
-                        summary: "ERROR", 
-                        detail: `Processing failed: ${error.message}`, 
-                        life: 5000
+                        severity: "error", summary: "ERROR", 
+                        detail: `Processing failed: ${error.message}`, life: 5000
                     });
                 }
             }
@@ -528,14 +536,8 @@ export default {
 
         async processImage(item, agentId) {
             try {
-                console.log(`Processing image ${item.id} with agent ${agentId}`);
-
-                this.$toast.add({ 
-                    severity: "info", 
-                    summary: "Downloading", 
-                    detail: `Downloading image ${item.id}...`, 
-                    life: 3000
-                });
+                // Step 0: Download S2
+                this.updateProgress(0, item.id.substring(0, 40));
 
                 const copernicusStore = useCopernicusStore();
                 const downloadResponse = await copernicusStore.downloadImages([item.stac_item]);
@@ -544,52 +546,30 @@ export default {
                     throw new Error('Download failed: No task ID received');
                 }
 
-                const taskId = downloadResponse.task_id;
-                console.log('Download task ID:', taskId);
-
                 let downloadCompleted = false;
                 let downloadResult = null;
                 let attempts = 0;
-                const maxAttempts = 60;
 
-                while (!downloadCompleted && attempts < maxAttempts) {
+                while (!downloadCompleted && attempts < 60) {
                     await new Promise(resolve => setTimeout(resolve, 5000));
-                    
-                    const statusResponse = await copernicusStore.checkDownloadStatus(taskId);
-                    console.log('Download status:', statusResponse.status);
-
+                    const statusResponse = await copernicusStore.checkDownloadStatus(downloadResponse.task_id);
                     if (statusResponse.status === 'completed') {
                         downloadCompleted = true;
                         downloadResult = statusResponse;
-                        
-                        this.$toast.add({ 
-                            severity: "success", 
-                            summary: "Downloaded", 
-                            detail: `Image ${item.id} downloaded successfully!`, 
-                            life: 3000
-                        });
                     } else if (statusResponse.status === 'failed') {
                         throw new Error('Download failed');
                     }
-                    
                     attempts++;
                 }
-
-                if (!downloadCompleted) {
-                    throw new Error('Download timeout - taking too long');
-                }
-
-                this.$toast.add({ 
-                    severity: "info", 
-                    summary: "Processing", 
-                    detail: `Processing image ${item.id} with AI...`, 
-                    life: 3000
-                });
+                if (!downloadCompleted) throw new Error('Download timeout');
 
                 const aiAgentStore = useAIAgentStore();
                 let result;
 
                 if (agentId === 'sr-processor') {
+                    // Step 1-4: SR pipeline
+                    this.updateProgress(1, 'S1 download + co-registration + SR inference — this may take a few minutes...');
+
                     const dateMatch = item.id.match(/(\d{8})T/);
                     const targetDate = dateMatch 
                         ? `${dateMatch[1].substring(0,4)}-${dateMatch[1].substring(4,6)}-${dateMatch[1].substring(6,8)}`
@@ -600,17 +580,7 @@ export default {
                         : `${item.id}/${item.id}.zip`;
 
                     const bbox = this.getBboxFromSearchArea();
-                    
-                    if (!bbox) {
-                        throw new Error('Could not determine bounding box for SR processing');
-                    }
-
-                    this.$toast.add({ 
-                        severity: "info", 
-                        summary: "Super Resolution", 
-                        detail: `Downloading SAR data and applying SR (mode: ${aiAgentStore.selectedSRMode})...`, 
-                        life: 10000
-                    });
+                    if (!bbox) throw new Error('Could not determine bounding box');
 
                     result = await aiAgentStore.processWithSelectedAgent({
                         s2_path: s2Path,
@@ -620,24 +590,19 @@ export default {
                         resultName: aiAgentStore.resultName || this.resultName
                     });
 
+                    this.updateProgress(2, 'Layer published to map');
                 } else {
+                    this.updateProgress(1, 'Running AI model...');
+
                     result = await aiAgentStore.processWithSelectedAgent({
                         image_filenames: [`${item.id}/${item.id}.zip`],
                         resultName: aiAgentStore.resultName || this.resultName
                     });
+
+                    this.updateProgress(2, 'Published');
                 }
 
-                console.log('AI Processing result:', result);
-                
                 await aiAgentStore.loadProcessingResults(item.id);
-                
-                this.$toast.add({ 
-                    severity: "success", 
-                    summary: "Processing Complete", 
-                    detail: `Image ${item.id} processed successfully!`, 
-                    life: 5000
-                });
-
                 return result;
 
             } catch (error) {
@@ -649,6 +614,23 @@ export default {
         async processChangeDetection(selectedItems) {
             try {
                 this.close();
+                this.cleanupMapOverlays();
+
+                const dialogStore = useDialogStore();
+
+                // Progress
+                this.startProgress([
+                    'Downloading scene T1',
+                    'Downloading scene T2', 
+                    'Processing SR + Change Detection — this may take several minutes',
+                    'Complete'
+                ]);
+
+                // Mix mode check
+                if (dialogStore.cdSelectedSceneExisting) {
+                    // Mix flow — handled in HomeView
+                    return;
+                }
 
                 const sorted = [...selectedItems].sort((a, b) => 
                     new Date(a.datetime) - new Date(b.datetime)
@@ -657,13 +639,6 @@ export default {
                 const itemT1 = sorted[0];
                 const itemT2 = sorted[1];
                 
-                this.$toast.add({ 
-                    severity: "info", 
-                    summary: "Change Detection", 
-                    detail: `Step 1/3: Downloading 2 scenes...`, 
-                    life: 10000
-                });
-
                 const bbox = this.getBboxFromSearchArea();
                 const aiAgentStore = useAIAgentStore();
                 const copernicusStore = useCopernicusStore();
@@ -675,32 +650,32 @@ export default {
                         : item.datetime.substring(0, 10);
                 };
 
+                // Step 0: Download T1
+                this.updateProgress(0, itemT1.id.substring(0, 40));
                 const dl1 = await copernicusStore.downloadImages([itemT1.stac_item]);
+                
+                // Step 1: Download T2
+                this.updateProgress(1, itemT2.id.substring(0, 40));
                 const dl2 = await copernicusStore.downloadImages([itemT2.stac_item]);
                 
-                const waitDownload = async (taskId, label) => {
+                const waitDownload = async (taskId) => {
                     for (let i = 0; i < 60; i++) {
                         await new Promise(r => setTimeout(r, 5000));
                         const status = await copernicusStore.checkDownloadStatus(taskId);
-                        console.log(`Download ${label} status:`, status.status);
                         if (status.status === 'completed') return status;
-                        if (status.status === 'failed') throw new Error(`Download ${label} failed`);
+                        if (status.status === 'failed') throw new Error('Download failed');
                     }
-                    throw new Error(`Download ${label} timeout`);
+                    throw new Error('Download timeout');
                 };
 
-                const result1 = await waitDownload(dl1.task_id, 'T1');
-                const result2 = await waitDownload(dl2.task_id, 'T2');
+                const result1 = await waitDownload(dl1.task_id);
+                const result2 = await waitDownload(dl2.task_id);
 
                 const s2PathT1 = result1.files ? result1.files[0] : `${itemT1.id}/${itemT1.id}.zip`;
                 const s2PathT2 = result2.files ? result2.files[0] : `${itemT2.id}/${itemT2.id}.zip`;
 
-                this.$toast.add({ 
-                    severity: "info", 
-                    summary: "Change Detection", 
-                    detail: `Step 2/3: Applying SR on both scenes + detecting changes...`, 
-                    life: 30000
-                });
+                // Step 2-5: SR + CVA (backend handles all steps)
+                this.updateProgress(2, 'SR on both scenes + CVA analysis...');
 
                 const result = await aiAgentStore.processWithSelectedAgent({
                     scene_t1: { s2_path: s2PathT1, bbox: bbox, target_date: extractDate(itemT1) },
@@ -710,24 +685,23 @@ export default {
                     resultName: aiAgentStore.resultName || this.resultName
                 });
 
-                console.log('Change Detection result:', result);
-                
+                this.updateProgress(3, 'Complete!');
+                this.finishProgress();
+
                 const stats = result.data.statistics;
                 this.$toast.add({ 
-                    severity: "success", 
-                    summary: "Change Detection Complete", 
-                    detail: `Changes: ${stats.changed_area_ha} ha (${stats.change_percentage}%). ` +
-                            `Vegetation loss: ${stats.vegetation_loss_ha} ha, gain: ${stats.vegetation_gain_ha} ha`, 
-                    life: 15000
+                    severity: "success", summary: "Change Detection Complete", 
+                    detail: `Changes: ${stats.changed_area_ha} ha (${stats.change_percentage}%)`, life: 15000
                 });
 
+                dialogStore.resetCDFlow();
+
             } catch (error) {
+                this.finishProgress();
                 console.error('Change detection error:', error);
                 this.$toast.add({ 
-                    severity: "error", 
-                    summary: "ERROR", 
-                    detail: `Change detection failed: ${error.message}`, 
-                    life: 5000
+                    severity: "error", summary: "ERROR", 
+                    detail: `Change detection failed: ${error.message}`, life: 5000
                 });
             }
         },
@@ -747,9 +721,28 @@ export default {
             return aiAgentStore.processingResults[productId] !== undefined;
         },
         
-        close() {
+        close(forceReset = false) {
             const dialogStore = useDialogStore();
             dialogStore.hideModelProcessingSearchResultsDialog();
+            
+            if (forceReset) {
+                this.cleanupMapOverlays();
+                dialogStore.resetCDFlow();
+            } else if (!dialogStore.cdFlowStep && !dialogStore.cdSelectedSceneNew) {
+                this.cleanupMapOverlays();
+                dialogStore.resetCDFlow();
+            }
+        },
+
+        cleanupMapOverlays() {
+            const mapStore = useMapStore();
+            mapStore.removeDrawLayer();
+            for (const item of this.compatibleAreaItems) {
+                if (item.visible) {
+                    mapStore.removeVectorLayer(item.id);
+                    item.visible = false;
+                }
+            }
         },
 
         moment(dateString) {
@@ -764,7 +757,22 @@ export default {
                 return `${tile} (${level})`;
             }
             return id.substring(0, 30);
-        }
+        },
+
+       startProgress(steps) {
+            const dialogStore = useDialogStore();
+            dialogStore.showProcessingProgress(steps);
+        },
+
+        updateProgress(step, detail = '') {
+            const dialogStore = useDialogStore();
+            dialogStore.updateProcessingProgress(step, detail);
+        },
+
+        finishProgress() {
+            const dialogStore = useDialogStore();
+            dialogStore.hideProcessingProgress();
+        },
     }
 }
 </script>

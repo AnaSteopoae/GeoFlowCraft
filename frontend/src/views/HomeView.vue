@@ -21,6 +21,13 @@
     :resultType="existingResultsType"
     @results-selected="onExistingResultsSelected"
     />
+    <AppProcessingProgressDialog 
+        v-model="progressVisible"
+        :currentStep="progressData.step"
+        :steps="progressData.steps"
+        :currentStepLabel="progressData.label"
+        :currentStepDetail="progressData.detail"
+    />
      <!-- CD Name dialog for existing results -->
     <PrimeDialog 
         v-model:visible="showCDNameDialog" 
@@ -76,6 +83,7 @@ import AppDataLayerCreateDialog from "@/components/dialogs/AppDataLayerCreateDia
 import AppModelProcessingSearchRequestDialog from "@/components/dialogs/AppModelProcessingSearchRequestDialog.vue";
 import AppModelProcessingSearchResultsDialog from "@/components/dialogs/AppModelProcessingSearchResultsDialog.vue";
 import AppExistingResultsDialog from '@/components/dialogs/AppExistingResultsDialog.vue';
+import AppProcessingProgressDialog from "@/components/dialogs/AppProcessingProgressDialog.vue";
 
 export default {
   name: "HomeView",
@@ -86,7 +94,7 @@ export default {
     AppDataLayerList,
     AppDataLayersDialog, AppDataLayerCreateDialog,
     AppModelProcessingSearchRequestDialog, AppModelProcessingSearchResultsDialog,
-    AppExistingResultsDialog
+    AppExistingResultsDialog, AppProcessingProgressDialog
 
   },
   data() {
@@ -118,6 +126,13 @@ export default {
         const taskInfo = useDialogStore().selectedTaskInfo;
         if (!taskInfo) return 2;
         return taskInfo.cdSource === 'mix' ? 1 : 2;
+    },
+    progressVisible: {
+        get() { return useDialogStore().processingProgress.visible; },
+        set(val) { if (!val) useDialogStore().hideProcessingProgress(); }
+    },
+    progressData() {
+        return useDialogStore().processingProgress;
     }
   },
   methods: {
@@ -180,12 +195,18 @@ export default {
       dialogStore.hideConfirmDialog();
     },
     onConfirmNo() {
-      const dialogStore = useDialogStore();
+     const dialogStore = useDialogStore();
       const event = dialogStore.confirmDialogInfo.event;
       
-      // Handle cancellation based on event type
       if (event === "CONFIRM_MODEL_PROCESSING_AREA") {
-        this.cancelModelProcessing();
+        // Șterge zona desenată și reactivează draw mode
+        const mapStore = useMapStore();
+        mapStore.removeDrawLayer();
+        this.pendingModelProcessingFeature = null;
+        dialogStore.hideConfirmDialog();
+        // Reactivează draw mode
+        mapStore.enableDrawInteraction("Polygon", this.confirmDrawnAreaForModelProcessing, true);
+        return;
       }
       
       dialogStore.hideConfirmDialog();
@@ -200,6 +221,41 @@ export default {
         mapStore.disableDrawInteration();
         mapStore.addDrawLayer(drawnFeature);
         
+        // Verificare dimensiune zonă
+        const geoJson = mapStore.getGeoJsonFromFeature(drawnFeature, "EPSG:4326");
+        let coords;
+        if (geoJson.type === 'Polygon') coords = geoJson.coordinates[0];
+        else if (geoJson.type === 'FeatureCollection') coords = geoJson.features[0]?.geometry?.coordinates[0];
+        
+        if (coords) {
+            const lons = coords.map(c => c[0]);
+            const lats = coords.map(c => c[1]);
+            const widthKm = (Math.max(...lons) - Math.min(...lons)) * 111 * Math.cos(lats[0] * Math.PI / 180);
+            const heightKm = (Math.max(...lats) - Math.min(...lats)) * 111;
+            const areaKm2 = widthKm * heightKm;
+            
+            if (areaKm2 < 1) {
+                this.$toast.add({ 
+                    severity: "warn", summary: "Area too small", 
+                    detail: `Selected area (~${areaKm2.toFixed(2)} km²) is very small. Results may not be meaningful. Minimum recommended: 1 km².`,
+                    life: 5000
+                });
+            }
+            
+            if (areaKm2 > 400) {
+                this.$toast.add({ 
+                    severity: "error", summary: "Area too large", 
+                    detail: `Selected area (~${areaKm2.toFixed(0)} km²) is too large. Maximum: ~400 km² (20×20 km). Please select a smaller area.`,
+                    life: 8000
+                });
+                mapStore.removeDrawLayer();
+                this.pendingModelProcessingFeature = null;
+                // Reactivează draw mode
+                mapStore.enableDrawInteraction("Polygon", this.confirmDrawnAreaForModelProcessing, true);
+                return;
+            }
+        }
+
         this.pendingModelProcessingFeature = drawnFeature;
         
         const dialogStore = useDialogStore();
@@ -262,7 +318,6 @@ export default {
             }
 
             // Ambele scene sunt selectate — deschide name dialog
-            const taskInfo = dialogStore.selectedTaskInfo;
             const taskLabel = taskInfo.task === 'cd-processor' ? 'CD-SR' : 'CD-CHM';
             this.cdResultName = `${taskLabel} mix ${Date.now().toString(36)}`;
             this.pendingCDSelection = {

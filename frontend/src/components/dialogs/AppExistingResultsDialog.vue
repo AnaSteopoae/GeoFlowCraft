@@ -4,6 +4,7 @@
         modal 
         :header="dialogHeader"
         :style="{ width: '50rem' }"
+        :closable="false"
         :breakpoints="{ '1199px': '75vw', '575px': '90vw' }"
     >
         <div class="existing-results-dialog">
@@ -68,9 +69,11 @@
                         <span v-else-if="isSelectedAsT2(result)" 
                               class="inline-block w-5 h-5 rounded-full text-center text-xs leading-5 font-bold"
                               style="background: rgba(34, 197, 94, 0.3); color: #86efac;">2</span>
-                        <span v-else-if="maxSelections === 1">
-                            <PrimeRadioButton :modelValue="selectedSingle === result" @click.stop="selectResult(result)" />
-                        </span>
+                         <span v-else-if="maxSelections === 1 && isSelectedAsSingle(result)"
+                              class="inline-block w-5 h-5 rounded-full text-center text-xs leading-5 font-bold"
+                              style="background: rgba(20, 184, 166, 0.4); color: #5eead4;">✓</span>
+                        <span v-else-if="maxSelections === 1"
+                              class="w-5 h-5 rounded-full border border-gray-600 inline-block"></span>
                         <span v-else class="w-5 h-5 rounded-full border border-gray-600 inline-block"></span>
                     </div>
                     <div class="w-[250px] text-sm truncate" :title="result.filename">
@@ -288,7 +291,10 @@ export default {
             if (type.includes('SR')) return '#fbbf24';
             if (type.includes('Canopy')) return '#86efac';
             return '#94a3b8';
-        }
+        },
+        isSelectedAsSingle(result) {
+            return this.selectedSingle && this.selectedSingle.filename === result.filename;
+        },
     }
 }
 </script>
