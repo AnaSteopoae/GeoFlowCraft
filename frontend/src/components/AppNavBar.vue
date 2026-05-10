@@ -33,6 +33,17 @@
                 outlined
                 @click="showResultsDialog"
             />
+            <!-- Processing indicator (minimized) -->
+            <div 
+                v-if="isProcessingMinimized" 
+                class="flex items-center gap-2 px-3 py-1 rounded-lg cursor-pointer"
+                style="background: rgba(20, 184, 166, 0.15); border: 1px solid rgba(20, 184, 166, 0.3);"
+                @click="restoreProgress"
+                v-tooltip.bottom="processingLabel"
+            >
+                <i class="pi pi-spin pi-spinner text-teal-400"></i>
+                <span class="text-xs text-teal-300">Processing...</span>
+            </div>
             <AppTaskSelectorDialog 
                 v-model="taskSelectorVisible" 
                 @task-selected="onTaskSelected" 
@@ -68,6 +79,13 @@ export default {
                 if (val) store.showTaskSelector();
                 else store.hideTaskSelector();
             }
+        },
+        isProcessingMinimized() {
+            return useDialogStore().processingProgress.minimized;
+        },
+        processingLabel() {
+            const p = useDialogStore().processingProgress;
+            return p.label || 'Processing...';
         }
     },
     methods: {
@@ -96,6 +114,10 @@ export default {
                 yesButtonText: "Confirm",
                 event: "MODEL_PROCESSING_ACTIVATE_DRAW_MODE"
             });
+        },
+        restoreProgress() {
+            const dialogStore = useDialogStore();
+            dialogStore.restoreProcessingProgress();
         }
     }
 }

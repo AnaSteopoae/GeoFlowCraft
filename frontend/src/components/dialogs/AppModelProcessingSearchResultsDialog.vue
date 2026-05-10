@@ -43,7 +43,7 @@
                     <div class="w-[100px] font-bold">Actions</div>
                 </div>
                 <div class="max-h-[200px] bg-gray-500/10 overflow-y-auto rounded-lg">
-                    <div v-for="(item, index) in compatibleAreaItems"
+                    <div v-for="(item, index) in sortedAreaItems"
                         class="flex flex-row gap-1 hover:bg-gray-600 px-1"
                     >
                         <div class="w-[20px] flex items-center">
@@ -75,7 +75,7 @@
                                 size="small"
                                 v-tooltip.bottom="'Show area item on map'"
                             />
-                            <PrimeButton 
+                            <!-- <PrimeButton 
                                 v-if="hasResultsForProduct(item.id)"
                                 @click="showResultsForProduct(item.id)"
                                 icon="pi pi-chart-bar" 
@@ -83,6 +83,14 @@
                                 severity="info"
                                 size="small"
                                 v-tooltip.bottom="'View processing results'"
+                            /> -->
+                            <PrimeButton 
+                                @click="toggleQuicklook(item)"
+                                :icon="item.quicklookVisible ? 'pi pi-eye' : 'pi pi-image'"
+                                variant="text" rounded 
+                                :severity="item.quicklookVisible ? 'success' : 'secondary'"
+                                size="small"
+                                v-tooltip.bottom="item.quicklookVisible ? 'Hide preview' : 'Show satellite preview'"
                             />
                         </div>
                     </div>
@@ -134,7 +142,7 @@
             </div>
             <template #footer>
                 <div class="flex justify-between w-full">
-                    <PrimeButton label="Cancel" icon="pi pi-times" severity="secondary" @click="showNameDialog = false" />
+                    <PrimeButton label="Cancel" icon="pi pi-times" severity="secondary" @click="cancelNaming" />
                     <PrimeButton 
                         label="Start processing" 
                         icon="pi pi-play" 
@@ -176,6 +184,7 @@ export default {
             resultName: '',
             pendingProcessItems: null,
             pendingProcessType: null,
+            s1FoundDates: null
         }
     },
     computed: {
@@ -225,8 +234,48 @@ export default {
             if (this.cdFlowStep === 'select_t2') return 'Select scene for T2 (newer date)';
             return 'Search results';
         },
+        sortedAreaItems() {
+            return [...this.compatibleAreaItems].sort((a, b) => {
+                const ccA = a.stac_item?.properties?.cloudCover ?? 100;
+                const ccB = b.stac_item?.properties?.cloudCover ?? 100;
+                return ccA - ccB;
+            });
+        },
     },
     methods: {
+        toggleQuicklook(item) {
+            const mapStore = useMapStore();
+            const previewId = `preview_${item.id}`;
+            
+            // Toggle — dacă e vizibil, scoate-l
+            if (item.quicklookVisible) {
+                mapStore.removeVectorLayer(previewId);
+                item.quicklookVisible = false;
+                return;
+            }
+
+            const bbox = item.bbox || this.getBboxFromSearchArea();
+            if (!bbox) {
+                this.$toast.add({ severity: "warn", summary: "WARNING", detail: "Cannot determine area bounds", life: 3000 });
+                return;
+            }
+
+            const dateMatch = item.id.match(/(\d{8})T/);
+            const date = dateMatch 
+                ? `${dateMatch[1].substring(0,4)}-${dateMatch[1].substring(4,6)}-${dateMatch[1].substring(6,8)}`
+                : '';
+
+            if (!date) {
+                this.$toast.add({ severity: "warn", summary: "WARNING", detail: "Cannot determine scene date", life: 3000 });
+                return;
+            }
+
+            const previewUrl = `http://localhost:8000/preview/s2?bbox=${bbox.join(',')}&date=${date}`;
+            mapStore.addImageLayer(previewId, previewUrl, bbox);
+            item.quicklookVisible = true;
+
+            this.$toast.add({ severity: "info", summary: "Loading preview", detail: "Satellite image preview loading...", life: 3000 });
+        },
         showAreaItemOnMap(item) {
             const bboxWebMercator = transformExtent(item.bbox, 'EPSG:4326', 'EPSG:3857')
             const polygonCoordinates = [
@@ -300,6 +349,7 @@ export default {
                 if (this.cdFlowStep === 'select_t1') {
                     // Salvează T1, caută T2
                     dialogStore.cdSelectedSceneT1 = selectedItems[0];
+                    this.cleanupFootprints();
                     this.close();
                     
                     this.$toast.add({ 
@@ -319,15 +369,24 @@ export default {
                         dialogStore.cdDatesT2[0], dialogStore.cdDatesT2[1]
                     );
 
-                    if (searchResponse.status == "success" && searchResponse.items?.length > 0) {
+                                       if (searchResponse.status == "success" && searchResponse.items?.length > 0) {
                         dialogStore.cdFlowStep = 'select_t2';
                         dialogStore.showModelProcessingSearchResultsDialog();
                     } else {
                         this.$toast.add({ 
                             severity: "warn", summary: "WARNING", 
-                            detail: "No data found for T2 period!", life: 3000
+                            detail: "No data found for T2 period! Please adjust the date ranges.", life: 5000
                         });
-                        dialogStore.resetCDFlow();
+                        // Curăță selecția și revino la calendare
+                        this.cleanupFootprints();
+                        dialogStore.cdFlowStep = null;
+                        dialogStore.cdSelectedSceneT1 = null;
+                        dialogStore.cdDatesT1 = null;
+                        dialogStore.cdDatesT2 = null;
+                        // Redeschide dialogul cu calendare
+                        dialogStore.showModelProcessingSearchRequestDialog({
+                            geoJson: this.modelProcessingSearchRequestDialog.requestInfo.geoJson
+                        });
                     }
                     return;
                 }
@@ -389,6 +448,7 @@ export default {
                 }
 
                 dialogStore2.cdSelectedSceneNew = selectedItems[0];
+                this.cleanupMapOverlays();
                 this.close();
 
                 this.$toast.add({ 
@@ -444,7 +504,9 @@ export default {
                             selectedItems.forEach(i => i.selected = false);
                             return;
                         }
-
+                        this.s1FoundDates = s1Check.dates;
+                        console.log('S1 dates found:', s1Check.dates);
+                        this.s1FoundDates = s1Check.dates;
                         this.$toast.add({ 
                             severity: "success", 
                             summary: "SAR data found", 
@@ -523,6 +585,7 @@ export default {
                         severity: "success", summary: "SUCCESS", 
                         detail: `"${this.resultName}" processed successfully!`, life: 5000
                     });
+                    dialogStore.resetAllProcessingState();
                 } catch (error) {
                     this.finishProgress();
                     console.error('Error processing images:', error);
@@ -568,12 +631,21 @@ export default {
 
                 if (agentId === 'sr-processor') {
                     // Step 1-4: SR pipeline
-                    this.updateProgress(1, 'S1 download + co-registration + SR inference — this may take a few minutes...');
-
                     const dateMatch = item.id.match(/(\d{8})T/);
                     const targetDate = dateMatch 
                         ? `${dateMatch[1].substring(0,4)}-${dateMatch[1].substring(4,6)}-${dateMatch[1].substring(6,8)}`
                         : item.datetime.substring(0, 10);
+
+                    let s1Date = null;
+                    if (this.s1FoundDates && this.s1FoundDates.length > 0) {
+                        const s2Time = new Date(targetDate).getTime();
+                        s1Date = this.s1FoundDates.reduce((closest, d) => {
+                            const diff = Math.abs(new Date(d).getTime() - s2Time);
+                            const closestDiff = Math.abs(new Date(closest).getTime() - s2Time);
+                            return diff < closestDiff ? d : closest;
+                        });
+                    }
+                    this.updateProgress(1, `S1 download ${s1Date} + co-registration + SR inference — this may take a few minutes...`);
 
                     const s2Path = downloadResult.files 
                         ? downloadResult.files[0] 
@@ -594,8 +666,10 @@ export default {
                 } else {
                     this.updateProgress(1, 'Running AI model...');
 
+                    const bbox = this.getBboxFromSearchArea();
                     result = await aiAgentStore.processWithSelectedAgent({
                         image_filenames: [`${item.id}/${item.id}.zip`],
+                        bbox: bbox,
                         resultName: aiAgentStore.resultName || this.resultName
                     });
 
@@ -613,8 +687,8 @@ export default {
 
         async processChangeDetection(selectedItems) {
             try {
-                this.close();
                 this.cleanupMapOverlays();
+                this.close();
 
                 const dialogStore = useDialogStore();
 
@@ -695,6 +769,7 @@ export default {
                 });
 
                 dialogStore.resetCDFlow();
+                dialogStore.resetAllProcessingState();
 
             } catch (error) {
                 this.finishProgress();
@@ -742,6 +817,24 @@ export default {
                     mapStore.removeVectorLayer(item.id);
                     item.visible = false;
                 }
+                if (item.quicklookVisible) {
+                    mapStore.removeVectorLayer(`preview_${item.id}`);
+                    item.quicklookVisible = false;
+                }
+            }
+        },
+
+        cleanupFootprints() {
+            const mapStore = useMapStore();
+            for (const item of this.compatibleAreaItems) {
+                if (item.visible) {
+                    mapStore.removeVectorLayer(item.id);
+                    item.visible = false;
+                }
+                if (item.quicklookVisible) {
+                    mapStore.removeVectorLayer(`preview_${item.id}`);
+                    item.quicklookVisible = false;
+                }
             }
         },
 
@@ -772,6 +865,13 @@ export default {
         finishProgress() {
             const dialogStore = useDialogStore();
             dialogStore.hideProcessingProgress();
+        },
+        cancelNaming() {
+            this.showNameDialog = false;
+            this.cleanupMapOverlays();
+            const dialogStore = useDialogStore();
+            dialogStore.hideModelProcessingSearchResultsDialog();
+            dialogStore.resetAllProcessingState();
         },
     }
 }

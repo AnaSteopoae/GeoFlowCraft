@@ -121,6 +121,8 @@
 import useAIAgentStore from "@/stores/aiAgent";
 import useDialogStore from "@/stores/dialog";
 import moment from 'moment';
+import useCopernicusStore from "@/stores/copernicus";
+import useMapStore from "@/stores/map";
 
 export default {
     name: "AppExistingResultsDialog",
@@ -251,9 +253,37 @@ export default {
 
         cancel() {
             this.visible = false;
+            const mapStore = useMapStore();
+            mapStore.removeAllOverlays();
+            const dialogStore = useDialogStore();
+            dialogStore.resetAllProcessingState();
         },
 
-        onContinue() {
+        async onContinue() {
+            if (this.maxSelections === 2 && this.selectedT1 && this.selectedT2) {
+                // Verificare overlap
+                try {
+                    const copernicusStore = useCopernicusStore();
+                    const overlap = await copernicusStore.checkOverlap(
+                        this.selectedT1.path, 
+                        this.selectedT2.path
+                    );
+                    if (!overlap.overlapping) {
+                        this.$toast.add({
+                            severity: "error", summary: "Geographic mismatch",
+                            detail: "The two selected results are not from the same geographic region.",
+                            life: 8000
+                        });
+                         // Resetează selecția dar rămâne pe dialog
+                        this.selectedT1 = null;
+                        this.selectedT2 = null;
+                        return;  // Nu închide dialogul
+                    }
+                } catch (err) {
+                    console.warn('Overlap check failed:', err);
+                }
+            }
+
             if (this.maxSelections === 1) {
                 this.$emit('results-selected', {
                     type: 'single',

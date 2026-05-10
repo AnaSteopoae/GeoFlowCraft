@@ -48,7 +48,7 @@
         </div>
         <template #footer>
             <div class="flex justify-between w-full">
-                <PrimeButton label="Cancel" icon="pi pi-times" severity="secondary" @click="showCDNameDialog = false" />
+                <PrimeButton label="Cancel" icon="pi pi-times" severity="secondary" @click="cancelCDNaming" />
                 <PrimeButton 
                     label="Start processing" 
                     icon="pi pi-play" 
@@ -141,6 +141,13 @@ export default {
     this.existingResultsMax = max;
     this.showExistingResults = true;
   },
+    cancelCDNaming() {
+        this.showCDNameDialog = false;
+        const mapStore = useMapStore();
+        mapStore.removeDrawLayer();
+        const dialogStore = useDialogStore();
+        dialogStore.resetAllProcessingState();
+    },
     onDataSetCreated() {
       this.$toast.add({ severity: "success", summary: "Success", detail: "The dataset has been successfully created!", life: 3000 });
     },
@@ -205,7 +212,7 @@ export default {
         this.pendingModelProcessingFeature = null;
         dialogStore.hideConfirmDialog();
         // Reactivează draw mode
-        mapStore.enableDrawInteraction("Polygon", this.confirmDrawnAreaForModelProcessing, true);
+        mapStore.enableDrawInteraction("Polygon", this.confirmDrawnAreaForModelProcessing, false);
         return;
       }
       
@@ -213,7 +220,7 @@ export default {
     },
     activateDrawModeForModelProcessing() {
       const mapStore = useMapStore();
-      mapStore.enableDrawInteraction("Polygon", this.confirmDrawnAreaForModelProcessing, true);
+      mapStore.enableDrawInteraction("Polygon", this.confirmDrawnAreaForModelProcessing, false);
     },
     confirmDrawnAreaForModelProcessing(drawnFeature) {
       try {
@@ -251,7 +258,7 @@ export default {
                 mapStore.removeDrawLayer();
                 this.pendingModelProcessingFeature = null;
                 // Reactivează draw mode
-                mapStore.enableDrawInteraction("Polygon", this.confirmDrawnAreaForModelProcessing, true);
+                mapStore.enableDrawInteraction("Polygon", this.confirmDrawnAreaForModelProcessing, false);
                 return;
             }
         }
@@ -317,6 +324,46 @@ export default {
                 return;
             }
 
+             // Verificare overlap: rezultat existent vs zona desenată
+            try {
+                const copernicusStore = useCopernicusStore();
+                const existingBbox = await copernicusStore.getGeotiffBbox(selection.result.path);
+                const drawnBbox = dialogStore.modelProcessingSearchRequestDialog.requestInfo?.geoJson;
+                
+                if (existingBbox.bbox && drawnBbox) {
+                    let drawnCoords;
+                    if (drawnBbox.type === 'Polygon') drawnCoords = drawnBbox.coordinates[0];
+                    else if (drawnBbox.type === 'FeatureCollection') drawnCoords = drawnBbox.features[0]?.geometry?.coordinates[0];
+                    
+                    if (drawnCoords) {
+                        const lons = drawnCoords.map(c => c[0]);
+                        const lats = drawnCoords.map(c => c[1]);
+                        const drawnExtent = [Math.min(...lons), Math.min(...lats), Math.max(...lons), Math.max(...lats)];
+                        const eb = existingBbox.bbox;
+                        
+                        // Verifică suprapunere
+                        const overlaps = !(
+                            eb[2] < drawnExtent[0] || 
+                            eb[0] > drawnExtent[2] || 
+                            eb[3] < drawnExtent[1] || 
+                            eb[1] > drawnExtent[3]
+                        );
+                        
+                        if (!overlaps) {
+                            this.$toast.add({
+                                severity: "error", summary: "Geographic mismatch",
+                                detail: "The existing result and the new scene are not from the same geographic region. Please select a result from the same area.",
+                                life: 8000
+                            });
+                            dialogStore.existingResultsDialogVisible = true;
+                            return;
+                        }
+                    }
+                }
+            } catch (err) {
+                console.warn('Overlap check failed:', err);
+            }
+
             // Ambele scene sunt selectate — deschide name dialog
             const taskLabel = taskInfo.task === 'cd-processor' ? 'CD-SR' : 'CD-CHM';
             this.cdResultName = `${taskLabel} mix ${Date.now().toString(36)}`;
@@ -333,44 +380,63 @@ export default {
         this.showCDNameDialog = false;
         const dialogStore = useDialogStore();
         const aiAgentStore = useAIAgentStore();
+        const copernicusStore = useCopernicusStore();
         const selection = this.pendingCDSelection;
+        const taskInfo = dialogStore.selectedTaskInfo;
+        const isCHM = taskInfo?.task === 'cd-chm-processor';
 
-        aiAgentStore.setSelectedAgent(dialogStore.selectedTaskInfo.task);
+        aiAgentStore.setSelectedAgent(taskInfo.task);
         aiAgentStore.resultName = this.cdResultName.trim();
 
-        this.$toast.add({
-            severity: "info", summary: "Processing",
-            detail: `Starting "${this.cdResultName}"...`, life: 5000
-        });
+        // Curăță harta
+        const mapStore = useMapStore();
+        mapStore.removeDrawLayer();
+
+        // Progress dialog
+        if (selection.type === 'pair') {
+            dialogStore.showProcessingProgress([
+                isCHM ? 'Running ΔCHM analysis' : 'Running CVA analysis',
+                'Publishing to map',
+                'Complete'
+            ]);
+        } else {
+            dialogStore.showProcessingProgress([
+                'Downloading new scene',
+                isCHM ? 'Running ΔCHM analysis' : 'SR + Change Detection',
+                'Publishing to map',
+                'Complete'
+            ]);
+        }
 
         try {
             let result;
 
             if (selection.type === 'pair') {
-                // CD "existing" — ambele din rezultate procesate
-                result = await aiAgentStore.processWithSelectedAgent({
+                dialogStore.updateProcessingProgress(0, 'Analyzing changes...');
+
+                const requestData = {
                     sr_t1_path: selection.t1.path,
                     sr_t2_path: selection.t2.path,
-                    mode: 'fidelity',
-                    threshold_method: 'otsu',
                     resultName: this.cdResultName.trim()
-                });
+                };
+
+                if (!isCHM) {
+                    requestData.mode = 'fidelity';
+                    requestData.threshold_method = 'otsu';
+                }
+
+                result = await aiAgentStore.processWithSelectedAgent(requestData);
+
+                dialogStore.updateProcessingProgress(1, 'Publishing layers...');
 
             } else if (selection.type === 'mix') {
-                // CD "mix" — o scenă existentă + o scenă nouă
+                dialogStore.updateProcessingProgress(0, 'Downloading new scene...');
+
                 const existingPath = selection.existingResult.path;
                 const newItem = selection.newScene;
-                
-                // Descarcă scena nouă
-                const copernicusStore = useCopernicusStore();
-                
-                this.$toast.add({
-                    severity: "info", summary: "Downloading",
-                    detail: "Downloading new scene...", life: 10000
-                });
 
                 const dl = await copernicusStore.downloadImages([newItem.stac_item]);
-                
+
                 let downloadCompleted = false;
                 let downloadResult = null;
                 for (let i = 0; i < 60; i++) {
@@ -382,14 +448,12 @@ export default {
                 if (!downloadCompleted) throw new Error('Download timeout');
 
                 const s2Path = downloadResult.files ? downloadResult.files[0] : `${newItem.id}/${newItem.id}.zip`;
-                
+
                 const dateMatch = newItem.id.match(/(\d{8})T/);
-                const targetDate = dateMatch 
+                const targetDate = dateMatch
                     ? `${dateMatch[1].substring(0,4)}-${dateMatch[1].substring(4,6)}-${dateMatch[1].substring(6,8)}`
                     : newItem.datetime?.substring(0, 10);
 
-                // Bbox din zona desenată
-                const mapStore = useMapStore();
                 const geoJson = dialogStore.modelProcessingSearchRequestDialog.requestInfo?.geoJson;
                 let bbox = null;
                 if (geoJson) {
@@ -403,12 +467,8 @@ export default {
                     }
                 }
 
-                this.$toast.add({
-                    severity: "info", summary: "Processing",
-                    detail: "Applying SR + Change Detection...", life: 30000
-                });
+                dialogStore.updateProcessingProgress(1, 'Processing SR + Change Detection...');
 
-                // Existentul e T1 (mai vechi), noul e T2 (mai recent)
                 result = await aiAgentStore.processWithSelectedAgent({
                     sr_t1_path: existingPath,
                     scene_t2: { s2_path: s2Path, bbox: bbox, target_date: targetDate },
@@ -416,17 +476,25 @@ export default {
                     threshold_method: 'otsu',
                     resultName: this.cdResultName.trim()
                 });
+
+                dialogStore.updateProcessingProgress(2, 'Publishing layers...');
             }
+
+            dialogStore.updateProcessingProgress(selection.type === 'pair' ? 2 : 3, 'Complete!');
+            dialogStore.hideProcessingProgress();
 
             const stats = result.data.statistics;
             this.$toast.add({
                 severity: "success", summary: "Change Detection Complete",
-                detail: `Changes: ${stats.changed_area_ha} ha (${stats.change_percentage}%)`, life: 10000
+                detail: `Changes: ${stats?.changed_area_ha || stats?.deforestation_area_ha || '?'} ha`,
+                life: 10000
             });
 
             dialogStore.resetCDFlow();
+            dialogStore.resetAllProcessingState();
 
         } catch (error) {
+            dialogStore.hideProcessingProgress();
             this.$toast.add({
                 severity: "error", summary: "ERROR",
                 detail: `CD failed: ${error.message}`, life: 5000

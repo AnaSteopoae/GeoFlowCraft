@@ -34,5 +34,18 @@ export default {
             days_tolerance: daysTolerance
         });
         return response.data;
+    },
+
+    async checkOverlap(path1, path2) {
+        let response = await axios.post(`${API_URL}/check/overlap`, {
+            path1: path1,
+            path2: path2
+        });
+        return response.data;
+    },
+
+    async getGeotiffBbox(filePath) {
+        let response = await axios.post(`${API_URL}/check/bbox`, { path: filePath });
+        return response.data;
     }
 }

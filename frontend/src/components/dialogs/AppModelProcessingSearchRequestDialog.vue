@@ -20,6 +20,7 @@
                     selectionMode="range" 
                     showIcon 
                     fluid
+                    :maxDate="new Date()"
                     @date-select="onDateSelect"
                 />
                 <div class="pl-3 text-xs text-gray-500 mt-1">
@@ -42,6 +43,7 @@
                         selectionMode="range" 
                         showIcon 
                         fluid
+                        :maxDate="new Date()"
                         placeholder="Select T1 period"
                         @date-select="onDateSelectT1"
                     />
@@ -61,6 +63,7 @@
                         showIcon 
                         fluid
                         placeholder="Select T2 period"
+                        :maxDate="new Date()"
                         @date-select="onDateSelectT2"
                     />
                 </div>

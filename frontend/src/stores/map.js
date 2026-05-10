@@ -13,6 +13,9 @@ import { getArea } from "ol/sphere";
 import Feature from "ol/Feature";
 import { Polygon } from "ol/geom";
 import { Style, Circle as StyleCircle, Fill as StyleFill, Stroke as StyleStroke } from "ol/style";
+import ImageLayer from 'ol/layer/Image';
+import Static from 'ol/source/ImageStatic';
+import { transformExtent } from 'ol/proj';
 
 export default defineStore("map", {
     state: () => ({
@@ -78,7 +81,8 @@ export default defineStore("map", {
                         params: {
                             FORMAT: dataLayerResponse.dataLayer.geoserver.layer.format.name,
                             LAYERS: dataLayerResponse.dataLayer.geoserver.layer.name
-                        }
+                        },
+                        crossOrigin: 'anonymous'
                     });
 
                     layer = new TileLayer({
@@ -324,6 +328,33 @@ export default defineStore("map", {
             } catch (e) {
                 console.warn('Could not restore visible layers:', e);
             }
+        },
+         addImageLayer(id, imageUrl, bbox) {
+            const extent = transformExtent(bbox, 'EPSG:4326', 'EPSG:3857');
+            
+            const imageLayer = new ImageLayer({
+                id: id,
+                source: new Static({
+                    url: imageUrl,
+                    imageExtent: extent,
+                    crossOrigin: 'anonymous'
+                }),
+                opacity: 0.85,
+                zIndex: 15000
+            });
+            
+            this.map.addLayer(imageLayer);
+        },
+        removeAllOverlays() {
+                const layers = this.map.getLayers().getArray().slice();
+                for (const layer of layers) {
+                    const name = layer.get('name');
+                    const id = layer.get('id') || layer.id;
+                    // Păstrează doar OSM și layerele din datasets (cu custom: true)
+                    if (name === 'OpenStreetMap') continue;
+                    if (layer.get('custom') === true) continue;
+                    this.map.removeLayer(layer);
+                }
         },
     }
 })

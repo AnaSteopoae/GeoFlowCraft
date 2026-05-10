@@ -67,8 +67,12 @@ class AIProcessorService {
         if (agentId === 'cd-processor') {
             return await this.processWithCD(inputData);
         }
+
+        if (agentId === 'cd-chm-processor') {
+            return await this.processWithCDCHM(inputData);
+        }
         
-        // Flow generic (CHM și viitori agenți)
+        // Flow generic (viitori agenți)
         try {
             const url = `${agent.url}${agent.endpoints.predict}`;
             
@@ -370,6 +374,11 @@ class AIProcessorService {
             throw new Error('sr_t1_path și sr_t2_path sunt obligatorii (sau scene_t1 + scene_t2)');
         }
 
+        const overlap = await this._checkGeographicOverlap(sr_t1_path, sr_t2_path);
+        if (!overlap.overlapping) {
+            throw new Error(`Scenes are not from the same geographic region. ${overlap.message}`);
+        }
+
         // ── Apelează change detection ──
         console.log(`[CD] Pas 3: CVA + ΔNDVI (metoda: ${threshold_method})...`);
 
@@ -393,6 +402,28 @@ class AIProcessorService {
             console.warn(`[CD] Nu am putut crea arhiva: ${archiveErr.message}`);
         }
 
+        // Publicare automată CD-SR pe hartă
+        try {
+            if (result.magnitude_path) {
+                await autoPublishResult({
+                    filePath: result.magnitude_path,
+                    name: `${inputData.resultName || 'CD-SR'} Magnitude`,
+                    type: 'cd-sr-magnitude',
+                    description: 'CVA Magnitude'
+                });
+            }
+            if (result.delta_ndvi_path) {
+                await autoPublishResult({
+                    filePath: result.delta_ndvi_path,
+                    name: `${inputData.resultName || 'CD-SR'} ΔNDVI`,
+                    type: 'cd-sr-ndvi',
+                    description: 'Delta NDVI'
+                });
+            }
+        } catch (pubErr) {
+            console.warn(`[CD] Auto-publish eșuat: ${pubErr.message}`);
+        }
+
         return {
             success: true,
             agentId: 'cd-processor',
@@ -407,6 +438,127 @@ class AIProcessorService {
                 statistics: result.statistics
             }
         };
+    }
+
+   async processWithCDCHM(inputData) {
+        const copernicusUrl = aiConfig.aiAgents['cd-chm-processor'].copernicusUrl;
+
+        let { sr_t1_path: chm_t1_path, sr_t2_path: chm_t2_path } = inputData;
+
+        if (!chm_t1_path || !chm_t2_path) {
+            throw new Error('Două fișiere CHM sunt obligatorii pentru CD-CHM');
+        }
+
+        const overlap = await this._checkGeographicOverlap(chm_t1_path, chm_t2_path);
+        if (!overlap.overlapping) {
+            throw new Error(`CHM scenes are not from the same geographic region. ${overlap.message}`);
+        }
+
+        console.log(`[CD-CHM] Start: T1=${chm_t1_path}, T2=${chm_t2_path}`);
+
+        const cdResponse = await axios.post(`${copernicusUrl}/change-detection/chm`, {
+            chm_t1_path: chm_t1_path,
+            chm_t2_path: chm_t2_path
+        }, { timeout: 120000 });
+
+        const result = cdResponse.data.results;
+        console.log(`[CD-CHM] Complet!`, JSON.stringify(result.statistics));
+
+        // Salvează arhiva în shared-data/chm_change_results/
+        const archiveDir = path.join(__dirname, '../../shared-data/chm_change_results');
+        if (!fs.existsSync(archiveDir)) {
+            fs.mkdirSync(archiveDir, { recursive: true });
+        }
+
+        const userResultName = inputData.resultName || `cd_chm_${new Date().toISOString().substring(0, 10)}`;
+        const archiveName = userResultName.replace(/[^a-zA-Z0-9_\-]/g, '_');
+
+        // Creează arhiva ZIP din directorul cu rezultate
+        let archivePath = null;
+        const resultsDir = result.delta_chm_path 
+            ? path.dirname(result.delta_chm_path) 
+            : result.deforestation_path 
+                ? path.dirname(result.deforestation_path)
+                : null;
+
+        if (resultsDir) {
+            try {
+                archivePath = await this._createResultsArchiveInDir(resultsDir, archiveName, archiveDir);
+            } catch (archiveErr) {
+                console.warn(`[CD-CHM] Nu am putut crea arhiva: ${archiveErr.message}`);
+            }
+        }
+
+        // Publicare automată CD-CHM pe hartă
+        try {
+            if (result.delta_chm_path) {
+                await autoPublishResult({
+                    filePath: result.delta_chm_path,
+                    name: `${inputData.resultName || 'CD-CHM'} ΔCHM`,
+                    type: 'cd-chm-delta',
+                    description: 'Delta CHM'
+                });
+            }
+            if (result.deforestation_path) {
+                await autoPublishResult({
+                    filePath: result.deforestation_path,
+                    name: `${inputData.resultName || 'CD-CHM'} Deforestation`,
+                    type: 'cd-chm-deforestation',
+                    description: 'Deforestation mask'
+                });
+            }
+        } catch (pubErr) {
+            console.warn(`[CD-CHM] Auto-publish eșuat: ${pubErr.message}`);
+        }
+
+        return {
+            success: true,
+            agentId: 'cd-chm-processor',
+            agentName: 'Deforestation Detection',
+            data: {
+                ...result,
+                archive_path: archivePath,
+                statistics: result.statistics || {}
+            }
+        };
+    }
+
+     // Verificare overlap geografic
+    async _checkGeographicOverlap(path1, path2) {
+        try {
+            const response = await axios.post(`http://localhost:8000/check/overlap`, {
+                path1: path1,
+                path2: path2
+            }, { timeout: 10000 });
+            return response.data;
+        } catch (err) {
+            console.warn(`[CD] Nu am putut verifica overlap-ul: ${err.message}`);
+            return { overlapping: true }; // Presupune overlap dacă verificarea eșuează
+        }
+    }
+
+    async _createResultsArchiveInDir(resultsDir, archiveName, outputDir) {
+        return new Promise((resolve, reject) => {
+            const outputPath = path.join(outputDir, `${archiveName}.zip`);
+            const output = fs.createWriteStream(outputPath);
+            const archive = archiver('zip', { zlib: { level: 6 } });
+
+            output.on('close', () => {
+                const sizeMB = (archive.pointer() / 1024 / 1024).toFixed(1);
+                console.log(`[CD-CHM] Arhivă creată: ${outputPath} (${sizeMB} MB)`);
+                resolve(outputPath);
+            });
+
+            archive.on('error', (err) => reject(err));
+            archive.pipe(output);
+
+            const files = fs.readdirSync(resultsDir).filter(f => f.endsWith('.tif'));
+            for (const file of files) {
+                archive.file(path.join(resultsDir, file), { name: file });
+            }
+
+            archive.finalize();
+        });
     }
 
     /**

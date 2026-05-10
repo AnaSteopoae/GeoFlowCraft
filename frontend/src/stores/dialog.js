@@ -32,6 +32,7 @@ export default defineStore('dialog', {
         cdSelectedSceneNew: null,
         processingProgress: {
             visible: false,
+            minimized:false,
             step: 0,
             steps: [],
             label: '',
@@ -136,6 +137,27 @@ export default defineStore('dialog', {
         },
         hideProcessingProgress() {
             this.processingProgress.visible = false;
+        },
+        minimizeProcessingProgress() {
+            this.processingProgress.minimized = true;
+            this.processingProgress.visible = false;
+        },
+        restoreProcessingProgress() {
+            this.processingProgress.minimized = false;
+            this.processingProgress.visible = true;
+        },
+        hideProcessingProgress() {
+            this.processingProgress.visible = false;
+            this.processingProgress.minimized = false;
+        },
+        resetAllProcessingState() {
+            // Resetează calendare
+            this.modelProcessingSearchRequestDialog.requestInfo.selectedDates = null;
+            this.modelProcessingSearchRequestDialog.requestInfo.geoJson = null;
+            // Resetează task info
+            this.selectedTaskInfo = null;
+            // Resetează CD flow
+            this.resetCDFlow();
         },
     }
 })

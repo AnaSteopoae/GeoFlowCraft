@@ -7,8 +7,12 @@ const dataSetService = require('../services/dataSetService');
 
 // Dataset IDs pentru rezultate automate
 const DATASET_IDS = {
-    sr: '69ed25e4467f9d5d728de666',   // Super Resolution Results
-    chm: '69ed25e4467f9d5d728de667'    // Canopy Height Results
+    sr: '69ed25e4467f9d5d728de666',
+    chm: '69ed25e4467f9d5d728de667',
+    'cd-sr-magnitude': '69ff9ed55bbe19d431d805db',
+    'cd-sr-ndvi': '69ff9ed55bbe19d431d805db',
+    'cd-chm-delta': '69ff9ed55bbe19d431d805dc',
+    'cd-chm-deforestation': '69ff9ed55bbe19d431d805dc'
 };
 
 // URL serviciul Copernicus (pentru conversie RGB)
@@ -89,17 +93,26 @@ async function autoPublishResult(options) {
         // 4. Aplică stilul potrivit
         let styleName = 'raster';
         try {
-            const layerDetails = await axios.get(
-                `${geoserverConfig.url}/rest/workspaces/${workspaceName}/coveragestores/${storeName}/coverages/${storeName}.json`,
-                { auth: geoserverConfig.auth }
-            );
-            const numBands = layerDetails.data?.coverage?.dimensions?.coverageDimension?.length || 0;
+            // Mapare stil per tip
+            const STYLE_MAP = {
+                'chm': 'canopy_height',
+                'cd-sr-magnitude': 'cd_magnitude',
+                'cd-sr-ndvi': 'cd_delta_ndvi',
+                'cd-chm-delta': 'cd_delta_ndvi',        // Divergent: roșu (pierdere) → verde (creștere)
+                'cd-chm-deforestation': 'cd_deforestation'
+            };
 
-            if (type === 'chm' || numBands === 1) {
-                styleName = 'canopy_height';
+            if (STYLE_MAP[type]) {
+                styleName = STYLE_MAP[type];
+            } else {
+                // Auto-detect: 1 bandă → canopy_height, 3 benzi → raster (RGB)
+                const layerDetails = await axios.get(
+                    `${geoserverConfig.url}/rest/workspaces/${workspaceName}/coveragestores/${storeName}/coverages/${storeName}.json`,
+                    { auth: geoserverConfig.auth }
+                );
+                const numBands = layerDetails.data?.coverage?.dimensions?.coverageDimension?.length || 0;
+                if (numBands === 1) styleName = 'canopy_height';
             }
-            // SR RGB uint8 cu 3 benzi — stilul default 'raster' e OK
-            // GeoServer afișează direct R=Band1, G=Band2, B=Band3
 
             if (styleName !== 'raster') {
                 await axios.put(
@@ -111,7 +124,7 @@ async function autoPublishResult(options) {
                     }
                 );
             }
-            console.log(`[AutoPublish] Stil aplicat: ${styleName} (${numBands} benzi)`);
+            console.log(`[AutoPublish] Stil aplicat: ${styleName}`);
         } catch (styleErr) {
             console.warn(`[AutoPublish] Nu am putut aplica stilul: ${styleErr.message}`);
         }

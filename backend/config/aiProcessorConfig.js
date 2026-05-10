@@ -40,7 +40,20 @@ module.exports = {
             inputFormat: 'sr-temporal-pair',
             outputFormat: 'geotiff',
             copernicusUrl: 'http://localhost:8000'
-        }
+        },
+
+        'cd-chm-processor': {
+        name: 'Deforestation Detection (ΔCHM)',
+        description: 'Detect forest canopy changes using CHM comparison',
+        url: 'http://localhost:8000',  // Același serviciu Copernicus
+        copernicusUrl: 'http://localhost:8000',
+        endpoints: {
+            predict: '/change-detection/chm',
+            health: '/health'
+        },
+        inputFormat: 'chm-temporal-pair',
+        outputFormat: 'geotiff-archive'
+    }
     },
 
     // Timeout pentru requesturi către servicii AI (în ms)

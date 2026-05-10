@@ -7,6 +7,7 @@ import logging
 import os
 import uuid
 import rasterio 
+import requests
 from dotenv import load_dotenv
 from auth import CopernicusAuth
 from stac_search import STACSearch
@@ -14,6 +15,7 @@ from downloader import Sentinel2Downloader
 from s1_downloader import download_s1_processed, coregister_s1_to_s2, stack_s2_s1
 from s2_preprocessor import preprocess_s2_safe
 from change_detection import run_change_detection, run_chm_change_detection
+from fastapi.responses import Response
 
 # Load environment variables from .env file
 load_dotenv()
@@ -105,6 +107,40 @@ s1_tasks_status = {}     # Task-uri S1 (nou)
 # ──────────────────────────────────────────────
 # Endpoint-uri existente (neschimbate)
 # ──────────────────────────────────────────────
+
+@app.get("/preview/s2")
+async def preview_s2(bbox: str, date: str):
+    """Renderizează preview RGB S2 via Sentinel Hub Process API."""
+    import httpx
+    
+    bbox_list = [float(x) for x in bbox.split(",")]
+    
+    async with httpx.AsyncClient() as client:
+        token_resp = await client.post(
+            "https://identity.dataspace.copernicus.eu/auth/realms/CDSE/protocol/openid-connect/token",
+            data={"grant_type": "client_credentials", "client_id": client_id, "client_secret": client_secret}
+        )
+        token = token_resp.json()["access_token"]
+        
+        resp = await client.post(
+            "https://sh.dataspace.copernicus.eu/api/v1/process",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "input": {
+                    "bounds": {"bbox": bbox_list, "properties": {"crs": "http://www.opengis.net/def/crs/EPSG/0/4326"}},
+                    "data": [{"type": "sentinel-2-l2a", "dataFilter": {"timeRange": {"from": f"{date}T00:00:00Z", "to": f"{date}T23:59:59Z"}}}]
+                },
+                "output": {"width": 512, "height": 512, "responses": [{"identifier": "default", "format": {"type": "image/png"}}]},
+                "evalscript": "//VERSION=3\nfunction setup(){return{input:[\"B04\",\"B03\",\"B02\"],output:{bands:3}};}\nfunction evaluatePixel(s){return[2.5*s.B04,2.5*s.B03,2.5*s.B02];}"
+            },
+            timeout=30.0
+        )
+    
+    if resp.status_code != 200:
+        logger.error(f"SH Process failed: {resp.status_code} - {resp.text[:200]}")
+        raise HTTPException(status_code=500, detail=f"Preview failed: {resp.status_code}")
+    
+    return Response(content=resp.content, media_type="image/png")
 
 @app.get("/")
 async def root():
@@ -464,8 +500,8 @@ async def check_s1_availability(request: CheckS1Request):
         from datetime import datetime, timedelta
 
         target = datetime.strptime(request.target_date, "%Y-%m-%d")
-        start = (target - timedelta(days=request.days_tolerance)).strftime("%Y-%m-%dT00:00:00")
-        end = (target + timedelta(days=request.days_tolerance)).strftime("%Y-%m-%dT23:59:59")
+        start = (target - timedelta(days=request.days_tolerance)).strftime("%Y-%m-%dT00:00:00Z")
+        end = (target + timedelta(days=request.days_tolerance)).strftime("%Y-%m-%dT23:59:59Z")
 
         bbox = request.bbox
         # Sentinel Hub catalog search for S1 GRD
@@ -483,8 +519,8 @@ async def check_s1_availability(request: CheckS1Request):
             "https://identity.dataspace.copernicus.eu/auth/realms/CDSE/protocol/openid-connect/token",
             data={
                 "grant_type": "client_credentials",
-                "client_id": os.environ.get("SH_CLIENT_ID"),
-                "client_secret": os.environ.get("SH_CLIENT_SECRET")
+                "client_id": os.environ.get("client_id"),
+                "client_secret": os.environ.get("client_secret"),
             }
         )
         sh_token = token_response.json().get("access_token")
@@ -497,7 +533,6 @@ async def check_s1_availability(request: CheckS1Request):
                 "Content-Type": "application/json"
             }
         )
-
         if response.status_code != 200:
             logger.warning(f"S1 check failed: {response.status_code}")
             return {"available": True, "message": "Could not verify, proceeding anyway"}
@@ -663,6 +698,62 @@ def normalize_geometry(geojson: dict) -> dict:
             raise ValueError("FeatureCollection must contain at least one feature")
     else:
         raise ValueError("GeoJSON must be a Polygon, MultiPolygon, or FeatureCollection")
+    
+class OverlapCheckRequest(BaseModel):
+    path1: str
+    path2: str
+
+@app.post("/check/overlap")
+async def check_overlap(request: OverlapCheckRequest):
+    """Verifică dacă două GeoTIFF-uri se suprapun geografic."""
+    try:
+        with rasterio.open(request.path1) as src1:
+            bounds1 = src1.bounds
+            crs1 = src1.crs
+        
+        with rasterio.open(request.path2) as src2:
+            bounds2 = src2.bounds
+            crs2 = src2.crs
+        
+        # Verifică suprapunere
+        overlap = not (
+            bounds1.right < bounds2.left or
+            bounds1.left > bounds2.right or
+            bounds1.top < bounds2.bottom or
+            bounds1.bottom > bounds2.top
+        )
+        
+        if not overlap:
+            return {
+                "overlapping": False,
+                "message": f"Scenes do not overlap. Scene 1: {bounds1}, Scene 2: {bounds2}"
+            }
+        
+        return {"overlapping": True, "message": "Scenes overlap geographically"}
+    
+    except Exception as e:
+        logger.error(f"Overlap check error: {str(e)}")
+        return {"overlapping": True, "message": f"Check failed: {str(e)}"}
+    
+@app.post("/check/bbox")
+async def get_geotiff_bbox(request: dict):
+    """Returnează bbox-ul unui GeoTIFF."""
+    try:
+        file_path = request.get("path")
+        with rasterio.open(file_path) as src:
+            from rasterio.warp import transform_bounds
+            # Transformă în EPSG:4326 dacă e necesar
+            if str(src.crs) != "EPSG:4326":
+                bounds = transform_bounds(src.crs, "EPSG:4326", *src.bounds)
+            else:
+                bounds = src.bounds
+            return {
+                "bbox": [bounds[0], bounds[1], bounds[2], bounds[3]],
+                "crs": str(src.crs)
+            }
+    except Exception as e:
+        logger.error(f"Bbox check error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn

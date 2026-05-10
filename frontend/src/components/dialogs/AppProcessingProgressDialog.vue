@@ -33,15 +33,23 @@
                 </div>
             </div>
 
-            <!-- Elapsed time -->
-            <div class="text-xs text-gray-500 text-right">
-                Elapsed: {{ elapsedFormatted }}
+            <!-- Elapsed time + Minimize -->
+            <div class="flex justify-between items-center">
+                <PrimeButton 
+                    label="Minimize" 
+                    icon="pi pi-window-minimize" 
+                    severity="secondary" 
+                    size="small"
+                    text
+                    @click="minimize"
+                />
             </div>
         </div>
     </PrimeDialog>
 </template>
 
 <script>
+import useDialogStore from "@/stores/dialog";
 export default {
     name: "AppProcessingProgressDialog",
     props: {
@@ -116,6 +124,10 @@ export default {
             if (index < this.currentStep) return '#86efac';
             if (index === this.currentStep) return '#5eead4';
             return '#4b5563';
+        },
+        minimize() {
+            const dialogStore = useDialogStore();
+            dialogStore.minimizeProcessingProgress();
         }
     }
 }

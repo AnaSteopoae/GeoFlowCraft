@@ -37,6 +37,16 @@ export default defineStore('copernicus', {
         async checkS1Availability(bbox, targetDate, daysTolerance = 6) {
             let response = await copernicusService.checkS1Availability(bbox, targetDate, daysTolerance);
             return response;
+        },
+
+        async checkOverlap(path1, path2) {
+            let response = await copernicusService.checkOverlap(path1, path2);
+            return response;
+        },
+
+        async getGeotiffBbox(filePath) {
+            let response = await copernicusService.getGeotiffBbox(filePath);
+            return response;
         }
     }
 })

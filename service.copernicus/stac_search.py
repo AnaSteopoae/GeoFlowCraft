@@ -56,7 +56,8 @@ class STACSearch:
             params = {
                 "$filter": filter_query,
                 "$top": limit,
-                "$orderby": "ContentDate/Start desc"
+                "$orderby": "ContentDate/Start desc",
+                "$expand": "Attributes"
             }
             
             logger.info(f"Searching OData API for Sentinel-2 with date range: {start_date} to {end_date}")
