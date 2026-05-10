@@ -13,6 +13,9 @@ import { getArea } from "ol/sphere";
 import Feature from "ol/Feature";
 import { Polygon } from "ol/geom";
 import { Style, Circle as StyleCircle, Fill as StyleFill, Stroke as StyleStroke } from "ol/style";
+import ImageLayer from 'ol/layer/Image';
+import Static from 'ol/source/ImageStatic';
+import { transformExtent } from 'ol/proj';
 
 export default defineStore("map", {
     state: () => ({
@@ -78,7 +81,8 @@ export default defineStore("map", {
                         params: {
                             FORMAT: dataLayerResponse.dataLayer.geoserver.layer.format.name,
                             LAYERS: dataLayerResponse.dataLayer.geoserver.layer.name
-                        }
+                        },
+                        crossOrigin: 'anonymous'
                     });
 
                     layer = new TileLayer({
@@ -97,6 +101,7 @@ export default defineStore("map", {
             
             if(visible == true) {
                 this.visibleLayers.push(layerInfo.id);
+                this._saveVisibleLayers(); 
             }
             
             this.map.addLayer(layer);
@@ -111,6 +116,7 @@ export default defineStore("map", {
 
             existingLayer.setVisible(true);
             this.visibleLayers.push(layerId);
+            this._saveVisibleLayers(); 
         },
         hideLayer(layerId) {
             let existingLayer = this.map.getLayers().getArray().find(
@@ -124,6 +130,7 @@ export default defineStore("map", {
             let indexOfVisibleLayer = this.visibleLayers.indexOf(layerId);
 
             this.visibleLayers.splice(indexOfVisibleLayer, 1);
+            this._saveVisibleLayers();
         },
         addDrawLayer(feature) {
             const fill = new StyleFill({
@@ -296,6 +303,58 @@ export default defineStore("map", {
             let geoJson = JSON.parse(geoJsonString);
 
             return geoJson;
-        }
+        },
+        _saveVisibleLayers() {
+            try {
+                localStorage.setItem('gfc_visible_layers', JSON.stringify(this.visibleLayers));
+            } catch (e) {
+                console.warn('Could not save visible layers:', e);
+            }
+        },
+
+        async restoreVisibleLayers() {
+            try {
+                const saved = localStorage.getItem('gfc_visible_layers');
+                if (!saved) return;
+                
+                const layerIds = JSON.parse(saved);
+                for (const layerId of layerIds) {
+                    try {
+                        await this.addLayer({ id: layerId }, true);
+                    } catch (e) {
+                        console.warn(`Could not restore layer ${layerId}:`, e);
+                    }
+                }
+            } catch (e) {
+                console.warn('Could not restore visible layers:', e);
+            }
+        },
+         addImageLayer(id, imageUrl, bbox) {
+            const extent = transformExtent(bbox, 'EPSG:4326', 'EPSG:3857');
+            
+            const imageLayer = new ImageLayer({
+                id: id,
+                source: new Static({
+                    url: imageUrl,
+                    imageExtent: extent,
+                    crossOrigin: 'anonymous'
+                }),
+                opacity: 0.85,
+                zIndex: 15000
+            });
+            
+            this.map.addLayer(imageLayer);
+        },
+        removeAllOverlays() {
+                const layers = this.map.getLayers().getArray().slice();
+                for (const layer of layers) {
+                    const name = layer.get('name');
+                    const id = layer.get('id') || layer.id;
+                    // Păstrează doar OSM și layerele din datasets (cu custom: true)
+                    if (name === 'OpenStreetMap') continue;
+                    if (layer.get('custom') === true) continue;
+                    this.map.removeLayer(layer);
+                }
+        },
     }
 })

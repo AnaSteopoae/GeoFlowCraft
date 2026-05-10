@@ -1,0 +1,8 @@
+# Exclude fișiere inutile din imaginea Docker
+__pycache__
+*.pyc
+.git
+.gitignore
+*.md
+.env
+.vscode

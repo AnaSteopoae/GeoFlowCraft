@@ -5,6 +5,12 @@ function getInternalError(error) {
     };
 }
 
+function handleError(res, error) {
+    console.error('Controller error:', error);
+    res.status(500).json(getInternalError(error));
+}
+
 module.exports = {
-    getInternalError
+    getInternalError,
+    handleError
 }

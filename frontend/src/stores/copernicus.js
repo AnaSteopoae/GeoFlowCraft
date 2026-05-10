@@ -22,6 +22,31 @@ export default defineStore('copernicus', {
             }
 
             return searchResponse
+        },
+        
+        async downloadImages(items) {
+            let downloadResponse = await copernicusService.download(items);
+            return downloadResponse;
+        },
+        
+        async checkDownloadStatus(taskId) {
+            let statusResponse = await copernicusService.getDownloadStatus(taskId);
+            return statusResponse;
+        },
+        
+        async checkS1Availability(bbox, targetDate, daysTolerance = 6) {
+            let response = await copernicusService.checkS1Availability(bbox, targetDate, daysTolerance);
+            return response;
+        },
+
+        async checkOverlap(path1, path2) {
+            let response = await copernicusService.checkOverlap(path1, path2);
+            return response;
+        },
+
+        async getGeotiffBbox(filePath) {
+            let response = await copernicusService.getGeotiffBbox(filePath);
+            return response;
         }
     }
 })

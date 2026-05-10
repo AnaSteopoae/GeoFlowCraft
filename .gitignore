@@ -151,3 +151,30 @@ types/v3-generated.d.ts
 
 _local
 uploads/
+
+backend/data_geoserver/
+
+# Sentinel-2 data (large files)
+*.SAFE/
+**/*.SAFE/
+shared-data/**/*.SAFE/
+shared-data/*.tif
+shared-data/*.tiff
+
+# AI processing outputs
+service.ai-ch-processor/output/*.tif
+service.ai-ch-processor/output/*.tiff
+service.ai-sr-processor/output/*.tif
+service.ai-sr-processor/output/*.tiff
+service.ai-sr-processor/output/*.xml
+service.ai-sr-processor/output/change_detection_results/*.tif
+service.ai-sr-processor/output/change_detection_results/*.tiff
+service.ai-sr-processor/output/change_detection_results/*.xml
+
+# GeoServer data layers
+backend/data_geoserver/data/*.tif
+backend/data_geoserver/data/*.tiff
+
+# Temporary downloads
+service.copernicus/downloads/
+*.zip

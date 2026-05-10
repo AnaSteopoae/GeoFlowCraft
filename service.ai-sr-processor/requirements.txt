@@ -1,0 +1,16 @@
+# GeoFlowCraft SR Service — Dependențe Python
+#
+# Versiuni fixate pentru reproducibilitate.
+# torch fără CUDA (CPU only) — imagine mai mică.
+# Când muți pe GPU, schimbă cu: torch>=2.1.0 (și folosește baza pytorch/pytorch)
+
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.1.0+cpu
+torchvision==0.16.0+cpu
+
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+numpy==1.26.4
+rasterio==1.3.10
+Pillow==10.2.0
+python-multipart==0.0.6

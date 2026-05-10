@@ -20,7 +20,25 @@ export default defineStore('dialog', {
         },
         confirmDialogVisible: false,
         confirmDialogInfo: null,
-        confirmDialogIsLoading: false
+        confirmDialogIsLoading: false,
+        taskSelectorVisible: false,
+        selectedTaskInfo: null,  // { task, cdSource, srMode }
+        existingResultsDialogVisible: false,
+        cdFlowStep: null,         // 'select_t1' | 'select_t2' | null
+        cdSelectedSceneT1: null,  // scena selectată pentru T1
+        cdSelectedSceneT2: null,  // scena selectată pentru T2
+        cdDatesT1: null,          // perioadă T1
+        cdDatesT2: null,          // perioadă T2
+        cdSelectedSceneNew: null,
+        processingProgress: {
+            visible: false,
+            minimized:false,
+            step: 0,
+            steps: [],
+            label: '',
+            detail: ''
+        },
+        cdSelectedSceneExisting: null,
     }),
     actions: {
         // DataSetCreateDialog
@@ -78,6 +96,68 @@ export default defineStore('dialog', {
         hideConfirmDialog() {
             this.confirmDialogVisible = false;
             this.confirmDialogInfo = null;
+        },
+        showTaskSelector() {
+            this.taskSelectorVisible = true;
+        },
+        hideTaskSelector() {
+            this.taskSelectorVisible = false;
+        },
+        setSelectedTaskInfo(taskInfo) {
+            this.selectedTaskInfo = taskInfo;
+        },
+        showExistingResultsDialog() {
+            this.existingResultsDialogVisible = true;
+        },
+        hideExistingResultsDialog() {
+            this.existingResultsDialogVisible = false;
+        },
+        resetCDFlow() {
+            this.cdFlowStep = null;
+            this.cdSelectedSceneT1 = null;
+            this.cdSelectedSceneT2 = null;
+            this.cdDatesT1 = null;
+            this.cdDatesT2 = null;
+            this.cdSelectedSceneExisting = null;
+            this.cdSelectedSceneNew = null;
+        },
+        showProcessingProgress(steps) {
+            this.processingProgress = {
+                visible: true,
+                step: 0,
+                steps: steps,
+                label: steps[0] || 'Processing...',
+                detail: ''
+            };
+        },
+        updateProcessingProgress(step, detail = '') {
+            this.processingProgress.step = step;
+            this.processingProgress.label = this.processingProgress.steps[step] || 'Processing...';
+            this.processingProgress.detail = detail;
+        },
+        hideProcessingProgress() {
+            this.processingProgress.visible = false;
+        },
+        minimizeProcessingProgress() {
+            this.processingProgress.minimized = true;
+            this.processingProgress.visible = false;
+        },
+        restoreProcessingProgress() {
+            this.processingProgress.minimized = false;
+            this.processingProgress.visible = true;
+        },
+        hideProcessingProgress() {
+            this.processingProgress.visible = false;
+            this.processingProgress.minimized = false;
+        },
+        resetAllProcessingState() {
+            // Resetează calendare
+            this.modelProcessingSearchRequestDialog.requestInfo.selectedDates = null;
+            this.modelProcessingSearchRequestDialog.requestInfo.geoJson = null;
+            // Resetează task info
+            this.selectedTaskInfo = null;
+            // Resetează CD flow
+            this.resetCDFlow();
         },
     }
 })

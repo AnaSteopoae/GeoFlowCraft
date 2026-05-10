@@ -1,17 +1,49 @@
 <template>
-    <PrimeDialog v-model:visible="modelProcessingSearchResultsDialog.visible" header="Search results" :closable="false">
-        <!-- List of the search results -->
+    <PrimeDialog v-model:visible="modelProcessingSearchResultsDialog.visible" 
+    :header="isCDStepMode ? cdStepHeader : 'Search results'" :closable="false">
         <div class="mb-4">
-            <div v-if="areaItems?.length > 0">
+            <div v-if="areaItems?.length > 0 && compatibleAreaItems.length === 0" class="mb-3 p-3 bg-yellow-500/20 border border-yellow-500 rounded-lg">
+                <div class="flex items-center gap-2">
+                    <i class="pi pi-exclamation-triangle text-yellow-400"></i>
+                    <div class="text-sm">
+                        <strong>No compatible images found!</strong><br/>
+                        The selected AI model requires Sentinel-2 images, but only other satellite data was found.
+                        Try searching for a different area or time period.
+                    </div>
+                    <!-- CD Step indicator -->
+            <div v-if="isCDStepMode" class="mb-3 p-3 rounded-lg" 
+                 :style="{ 
+                     background: cdFlowStep === 'select_t1' ? 'rgba(239, 68, 68, 0.1)' : 'rgba(34, 197, 94, 0.1)',
+                     border: cdFlowStep === 'select_t1' ? '1px solid rgba(239, 68, 68, 0.3)' : '1px solid rgba(34, 197, 94, 0.3)'
+                 }">
+                <div class="flex items-center gap-2 text-sm">
+                    <span class="inline-block w-6 h-6 rounded-full text-center text-sm leading-6 font-bold" 
+                          :style="{ 
+                              background: cdFlowStep === 'select_t1' ? 'rgba(239, 68, 68, 0.3)' : 'rgba(34, 197, 94, 0.3)',
+                              color: cdFlowStep === 'select_t1' ? '#fca5a5' : '#86efac'
+                          }">
+                        {{ cdFlowStep === 'select_t1' ? '1' : '2' }}
+                    </span>
+                    <span style="color: #e2e8f0;">
+                        {{ cdFlowStep === 'select_t1' 
+                            ? 'Select ONE scene for the BEFORE period (T1)' 
+                            : 'Select ONE scene for the AFTER period (T2)' }}
+                    </span>
+                </div>
+            </div>
+                </div>
+            </div>
+            
+            <div v-if="compatibleAreaItems?.length > 0">
                 <div class="flex flex-row gap-1 text-lg text-gray-500 border-b border-gray-500 mb-1 px-1">
                     <div class="w-[20px]"></div>
                     <div class="w-[150px] font-bold">Date</div>
                     <div class="w-[150px] font-bold">Cloud cover</div>
                     <div class="w-[200px] font-bold">ID</div>
-                    <div class="w-[50px]"></div>
+                    <div class="w-[100px] font-bold">Actions</div>
                 </div>
                 <div class="max-h-[200px] bg-gray-500/10 overflow-y-auto rounded-lg">
-                    <div v-for="(item, index) in areaItems"
+                    <div v-for="(item, index) in sortedAreaItems"
                         class="flex flex-row gap-1 hover:bg-gray-600 px-1"
                     >
                         <div class="w-[20px] flex items-center">
@@ -21,14 +53,17 @@
                             {{ moment(item.datetime).format("YYYY-MM-DD HH:mm") }}
                         </div>
                         <div class="w-[150px] flex items-center overflow-hidden">{{ item.stac_item.properties.cloudCover }}</div>
-                        <div class="w-[200px] flex items-center overflow-hidden">{{ item.id }}</div>
-                        <div class="w-[50px] flex items-center">
+                        <div class="w-[200px] flex items-center overflow-hidden" :title="item.id">
+                            {{ extractTileInfo(item.id) }}
+                        </div>
+                        <div class="w-[100px] flex items-center gap-1">
                             <PrimeButton 
                                 v-if="item.visible"
                                 @click="hideAreaItemFromMap(item)"
                                 icon="pi pi-eye" 
                                 variant="text" rounded 
                                 severity="success"
+                                size="small"
                                 v-tooltip.bottom="'Hide area item from map'"
                             />
                             <PrimeButton 
@@ -37,30 +72,87 @@
                                 icon="pi pi-eye-slash"
                                 variant="text" rounded 
                                 severity="danger"
+                                size="small"
                                 v-tooltip.bottom="'Show area item on map'"
+                            />
+                            <!-- <PrimeButton 
+                                v-if="hasResultsForProduct(item.id)"
+                                @click="showResultsForProduct(item.id)"
+                                icon="pi pi-chart-bar" 
+                                variant="text" rounded 
+                                severity="info"
+                                size="small"
+                                v-tooltip.bottom="'View processing results'"
+                            /> -->
+                            <PrimeButton 
+                                @click="toggleQuicklook(item)"
+                                :icon="item.quicklookVisible ? 'pi pi-eye' : 'pi pi-image'"
+                                variant="text" rounded 
+                                :severity="item.quicklookVisible ? 'success' : 'secondary'"
+                                size="small"
+                                v-tooltip.bottom="item.quicklookVisible ? 'Hide preview' : 'Show satellite preview'"
                             />
                         </div>
                     </div>
                 </div>
             </div>
             <div v-else>
-                There is not data.
+                There is no data.
             </div>
         </div>
-        <!-- Buttons -->
         <div class="flex justify-between items-center">
             <PrimeButton label="Close" icon="pi pi-times" severity="danger"
-                @click="close"
+                @click="close(true)"
             ></PrimeButton>
             <PrimeButton label="Process" icon="pi pi-microchip" severity="success" 
                 @click="process"
-                v-tooltip.bottom="(areaItems?.filter(areaItem => areaItem.selected == true).length > 0) 
+                v-tooltip.bottom="(compatibleAreaItems?.filter(areaItem => areaItem.selected == true).length > 0) 
                                     ? 'Process the selected area item(s)' 
-                                    : 'Select at least one area item to process'"
-                :disabled="!(areaItems?.filter(areaItem => areaItem.selected == true).length > 0)"
+                                    : 'Select at least one compatible area item to process'"
+                :disabled="!(compatibleAreaItems?.filter(areaItem => areaItem.selected == true).length > 0)"
             ></PrimeButton>
         </div>
         <PrimeToast />
+        
+        <AppProcessingResultsDialog 
+            v-model="showResultsDialog"
+            :productId="selectedProductId"
+        />
+
+        <!-- Name input dialog -->
+        <PrimeDialog 
+            v-model:visible="showNameDialog" 
+            modal 
+            header="Name your result"
+            :style="{ width: '25rem' }"
+        >
+            <div class="flex flex-col gap-3 my-2">
+                <div class="text-sm text-gray-400">
+                    Choose a name for this processing result:
+                </div>
+                <InputText 
+                    v-model="resultName" 
+                    placeholder="e.g. Brașov urban area Feb 2026"
+                    class="w-full"
+                    @keyup.enter="confirmProcessing"
+                />
+                <div class="text-xs text-gray-500">
+                    This name will appear in the map layers and View Results.
+                </div>
+            </div>
+            <template #footer>
+                <div class="flex justify-between w-full">
+                    <PrimeButton label="Cancel" icon="pi pi-times" severity="secondary" @click="cancelNaming" />
+                    <PrimeButton 
+                        label="Start processing" 
+                        icon="pi pi-play" 
+                        severity="success"
+                        :disabled="!resultName || resultName.trim().length === 0"
+                        @click="confirmProcessing" 
+                    />
+                </div>
+            </template>
+        </PrimeDialog>
     </PrimeDialog>
 </template>
 
@@ -69,60 +161,721 @@ import { mapState } from 'pinia';
 import useDialogStore from "@/stores/dialog";
 import useCopernicusStore from "@/stores/copernicus";
 import useMapStore from "@/stores/map";
+import useAIAgentStore from "@/stores/aiAgent";
+import AppProcessingResultsDialog from "@/components/dialogs/AppProcessingResultsDialog.vue";
+import InputText from 'primevue/inputtext';
+import AppProcessingProgressDialog from "@/components/dialogs/AppProcessingProgressDialog.vue";
 
 import moment from 'moment';
 import { transformExtent } from 'ol/proj';
 
 export default {
     name: "AppModelProcessingSearchResultsDialog",
-    components: {},
+    components: {
+        AppProcessingResultsDialog,
+        InputText,
+        AppProcessingProgressDialog
+    },
     data() {
-        return {}
+        return {
+            showResultsDialog: false,
+            selectedProductId: null,
+            showNameDialog: false,
+            resultName: '',
+            pendingProcessItems: null,
+            pendingProcessType: null,
+            s1FoundDates: null
+        }
     },
     computed: {
-        ...mapState(useDialogStore, ["modelProcessingSearchResultsDialog"]),
-        ...mapState(useCopernicusStore, ["areaItems"])
+        ...mapState(useDialogStore, ["modelProcessingSearchRequestDialog", "modelProcessingSearchResultsDialog"]),
+        ...mapState(useCopernicusStore, ["areaItems"]),
+        
+        compatibleAreaItems() {
+            const aiAgentStore = useAIAgentStore();
+            const selectedAgent = aiAgentStore.getSelectedAgent;
+            
+            if (!selectedAgent) {
+                return this.areaItems;
+            }
+            
+            if (selectedAgent.inputFormat === 'sentinel2-safe') {
+                return this.areaItems.filter(item => 
+                    (item.id.startsWith('S2A_MSIL2A_') || item.id.startsWith('S2B_MSIL2A_') || item.id.startsWith('S2C_MSIL2A_'))
+                );
+            }
+            
+            if (selectedAgent.inputFormat === 'sentinel2-s1-stack') {
+                return this.areaItems.filter(item => 
+                    item.id.startsWith('S2A_MSIL2A_') || item.id.startsWith('S2B_MSIL2A_') || item.id.startsWith('S2C_MSIL2A_') ||
+                    item.id.startsWith('S2A_MSIL1C_') || item.id.startsWith('S2B_MSIL1C_') || item.id.startsWith('S2C_MSIL1C_')
+                );
+            }
+
+            if (selectedAgent.inputFormat === 'sr-temporal-pair') {
+                return this.areaItems.filter(item => 
+                    item.id.startsWith('S2A_MSIL2A_') || item.id.startsWith('S2B_MSIL2A_') || item.id.startsWith('S2C_MSIL2A_') ||
+                    item.id.startsWith('S2A_MSIL1C_') || item.id.startsWith('S2B_MSIL1C_') || item.id.startsWith('S2C_MSIL1C_')
+                );
+            }
+            
+            return this.areaItems;
+        },
+        cdFlowStep() {
+            return useDialogStore().cdFlowStep;
+        },
+
+        isCDStepMode() {
+            return this.cdFlowStep === 'select_t1' || this.cdFlowStep === 'select_t2';
+        },
+
+        cdStepHeader() {
+            if (this.cdFlowStep === 'select_t1') return 'Select scene for T1 (older date)';
+            if (this.cdFlowStep === 'select_t2') return 'Select scene for T2 (newer date)';
+            return 'Search results';
+        },
+        sortedAreaItems() {
+            return [...this.compatibleAreaItems].sort((a, b) => {
+                const ccA = a.stac_item?.properties?.cloudCover ?? 100;
+                const ccB = b.stac_item?.properties?.cloudCover ?? 100;
+                return ccA - ccB;
+            });
+        },
     },
     methods: {
+        toggleQuicklook(item) {
+            const mapStore = useMapStore();
+            const previewId = `preview_${item.id}`;
+            
+            // Toggle — dacă e vizibil, scoate-l
+            if (item.quicklookVisible) {
+                mapStore.removeVectorLayer(previewId);
+                item.quicklookVisible = false;
+                return;
+            }
+
+            const bbox = item.bbox || this.getBboxFromSearchArea();
+            if (!bbox) {
+                this.$toast.add({ severity: "warn", summary: "WARNING", detail: "Cannot determine area bounds", life: 3000 });
+                return;
+            }
+
+            const dateMatch = item.id.match(/(\d{8})T/);
+            const date = dateMatch 
+                ? `${dateMatch[1].substring(0,4)}-${dateMatch[1].substring(4,6)}-${dateMatch[1].substring(6,8)}`
+                : '';
+
+            if (!date) {
+                this.$toast.add({ severity: "warn", summary: "WARNING", detail: "Cannot determine scene date", life: 3000 });
+                return;
+            }
+
+            const previewUrl = `http://localhost:8000/preview/s2?bbox=${bbox.join(',')}&date=${date}`;
+            mapStore.addImageLayer(previewId, previewUrl, bbox);
+            item.quicklookVisible = true;
+
+            this.$toast.add({ severity: "info", summary: "Loading preview", detail: "Satellite image preview loading...", life: 3000 });
+        },
         showAreaItemOnMap(item) {
-            // item.bbox is a bounding box: [minX, minY, maxX, maxY]
-            // bbox coordinates are in EPSG:4326 (WGS84 longitude/latitude)
-            // OpenLayers' default 
             const bboxWebMercator = transformExtent(item.bbox, 'EPSG:4326', 'EPSG:3857')
             const polygonCoordinates = [
-                [bboxWebMercator[0], bboxWebMercator[1]], // bottom-left (minX, minY)
-                [bboxWebMercator[2], bboxWebMercator[1]], // bottom-right (maxX, minY)
-                [bboxWebMercator[2], bboxWebMercator[3]], // top-right (maxX, maxY)
-                [bboxWebMercator[0], bboxWebMercator[3]], // top-left (minX, maxY)
-                [bboxWebMercator[0], bboxWebMercator[1]] // close the polygon
+                [bboxWebMercator[0], bboxWebMercator[1]],
+                [bboxWebMercator[2], bboxWebMercator[1]],
+                [bboxWebMercator[2], bboxWebMercator[3]],
+                [bboxWebMercator[0], bboxWebMercator[3]],
+                [bboxWebMercator[0], bboxWebMercator[1]]
             ]
 
             const mapStore = useMapStore();
             mapStore.addVectorLayer(item.id, polygonCoordinates);
-
             item.visible = true;
         },
+
         hideAreaItemFromMap(item) {
             const mapStore = useMapStore();
             mapStore.removeVectorLayer(item.id);
-
             item.visible = false;
         },
-        process() {
-            // TODO: Send processing request
-            this.$toast.add({ severity: "error", summary: "ERROR", detail: `This functionality is not implemented!`, life: 3000});
+
+        getBboxFromSearchArea() {
+            const geoJson = this.modelProcessingSearchRequestDialog.requestInfo?.geoJson;
+            
+            if (!geoJson) return null;
+            
+            let coords;
+            if (geoJson.type === 'Polygon') {
+                coords = geoJson.coordinates[0];
+            } else if (geoJson.type === 'MultiPolygon') {
+                coords = geoJson.coordinates[0][0];
+            } else if (geoJson.type === 'FeatureCollection') {
+                const geom = geoJson.features[0]?.geometry;
+                if (!geom) return null;
+                coords = geom.type === 'Polygon' 
+                    ? geom.coordinates[0] 
+                    : geom.coordinates[0][0];
+            }
+            
+            if (!coords || coords.length === 0) return null;
+            
+            const lons = coords.map(c => c[0]);
+            const lats = coords.map(c => c[1]);
+            return [
+                Math.min(...lons),
+                Math.min(...lats),
+                Math.max(...lons),
+                Math.max(...lats)
+            ];
         },
-        close() {
+
+        /**
+         * Process button handler.
+         * Validates selection, checks S1 availability, then shows name dialog.
+         */
+        async process() {
+            const selectedItems = this.compatibleAreaItems.filter(item => item.selected);
+            const aiAgentStore = useAIAgentStore();
+            const dialogStore = useDialogStore();
+
+            // ── CD Step Mode: selectare T1 sau T2 ──
+            if (this.isCDStepMode) {
+                if (selectedItems.length !== 1) {
+                    this.$toast.add({ 
+                        severity: "warn", summary: "WARNING", 
+                        detail: "Please select exactly 1 scene!", life: 3000
+                    });
+                    return;
+                }
+
+                if (this.cdFlowStep === 'select_t1') {
+                    // Salvează T1, caută T2
+                    dialogStore.cdSelectedSceneT1 = selectedItems[0];
+                    this.cleanupFootprints();
+                    this.close();
+                    
+                    this.$toast.add({ 
+                        severity: "success", summary: "T1 Selected", 
+                        detail: `T1: ${selectedItems[0].id.substring(0, 40)}`, life: 3000
+                    });
+
+                    // Căutare pentru T2
+                    this.$toast.add({ 
+                        severity: "info", summary: "Searching T2", 
+                        detail: "Searching satellite images for the second period...", life: 3000
+                    });
+
+                    const copernicusStore = useCopernicusStore();
+                    const searchResponse = await copernicusStore.search(
+                        this.modelProcessingSearchRequestDialog.requestInfo.geoJson,
+                        dialogStore.cdDatesT2[0], dialogStore.cdDatesT2[1]
+                    );
+
+                                       if (searchResponse.status == "success" && searchResponse.items?.length > 0) {
+                        dialogStore.cdFlowStep = 'select_t2';
+                        dialogStore.showModelProcessingSearchResultsDialog();
+                    } else {
+                        this.$toast.add({ 
+                            severity: "warn", summary: "WARNING", 
+                            detail: "No data found for T2 period! Please adjust the date ranges.", life: 5000
+                        });
+                        // Curăță selecția și revino la calendare
+                        this.cleanupFootprints();
+                        dialogStore.cdFlowStep = null;
+                        dialogStore.cdSelectedSceneT1 = null;
+                        dialogStore.cdDatesT1 = null;
+                        dialogStore.cdDatesT2 = null;
+                        // Redeschide dialogul cu calendare
+                        dialogStore.showModelProcessingSearchRequestDialog({
+                            geoJson: this.modelProcessingSearchRequestDialog.requestInfo.geoJson
+                        });
+                    }
+                    return;
+                }
+
+                if (this.cdFlowStep === 'select_t2') {
+                    // Salvează T2, continuă cu procesare
+                    dialogStore.cdSelectedSceneT2 = selectedItems[0];
+                    
+                    this.$toast.add({ 
+                        severity: "success", summary: "T2 Selected", 
+                        detail: `T2: ${selectedItems[0].id.substring(0, 40)}`, life: 3000
+                    });
+
+                    // Generează nume implicit
+                    const t1 = dialogStore.cdSelectedSceneT1;
+                    const t2 = dialogStore.cdSelectedSceneT2;
+                    const t1Tile = t1.id.match(/T\d{2}[A-Z]{3}/)?.[0] || '';
+                    const t1Date = t1.id.match(/(\d{8})T/)?.[1] || '';
+                    const t2Date = t2.id.match(/(\d{8})T/)?.[1] || '';
+                    const taskLabel = aiAgentStore.selectedAgent === 'cd-processor' ? 'CD-SR' : 'CD-CHM';
+                    
+                    this.resultName = `${taskLabel} ${t1Tile} ${t1Date}-${t2Date}`.trim();
+                    this.pendingProcessItems = [t1, t2];
+                    this.pendingProcessType = 'cd';
+                    this.showNameDialog = true;
+                    return;
+                }
+            }
+            
+            if (selectedItems.length === 0) {
+                this.$toast.add({ 
+                    severity: "warn", 
+                    summary: "WARNING", 
+                    detail: "Please select at least one compatible image!", 
+                    life: 3000
+                });
+                return;
+            }
+
+            if (!aiAgentStore.selectedAgent) {
+                this.$toast.add({ 
+                    severity: "error", 
+                    summary: "ERROR", 
+                    detail: "No AI model selected!", 
+                    life: 3000
+                });
+                return;
+            }
+
+             // Mix mode: selectare 1 scenă nouă, apoi alege din rezultate existente
+            const dialogStore2 = useDialogStore();
+            if (dialogStore2.selectedTaskInfo?.cdSource === 'mix') {
+                if (selectedItems.length !== 1) {
+                    this.$toast.add({ 
+                        severity: "warn", summary: "WARNING", 
+                        detail: "Please select exactly 1 scene for mix mode!", life: 3000
+                    });
+                    return;
+                }
+
+                dialogStore2.cdSelectedSceneNew = selectedItems[0];
+                this.cleanupMapOverlays();
+                this.close();
+
+                this.$toast.add({ 
+                    severity: "info", summary: "Mix mode", 
+                    detail: "Now select an existing result to compare with.", life: 5000
+                });
+
+                dialogStore2.existingResultsDialogVisible = true;
+                return;
+            }
+
+            // Change Detection necesită exact 2 scene
+            if (aiAgentStore.selectedAgent === 'cd-processor') {
+                if (selectedItems.length !== 2) {
+                    this.$toast.add({ 
+                        severity: "warn", 
+                        summary: "WARNING", 
+                        detail: "Change Detection requires exactly 2 images from different dates!", 
+                        life: 5000
+                    });
+                    return;
+                }
+            }
+
+            // Verificare S1 pentru SR și CD-SR
+            if (aiAgentStore.selectedAgent === 'sr-processor' || aiAgentStore.selectedAgent === 'cd-processor') {
+                const bbox = this.getBboxFromSearchArea();
+                
+                for (const item of selectedItems) {
+                    const dateMatch = item.id.match(/(\d{8})T/);
+                    const targetDate = dateMatch 
+                        ? `${dateMatch[1].substring(0,4)}-${dateMatch[1].substring(4,6)}-${dateMatch[1].substring(6,8)}`
+                        : item.datetime.substring(0, 10);
+
+                    this.$toast.add({ 
+                        severity: "info", 
+                        summary: "Checking SAR data", 
+                        detail: `Verifying S1 availability for ${targetDate}...`, 
+                        life: 5000
+                    });
+
+                    try {
+                        const copernicusStore = useCopernicusStore();
+                        const s1Check = await copernicusStore.checkS1Availability(bbox, targetDate);
+                        
+                        if (!s1Check.available) {
+                            this.$toast.add({ 
+                                severity: "error", 
+                                summary: "No SAR data available", 
+                                detail: `${s1Check.message}. Please select another scene.`, 
+                                life: 8000
+                            });
+                            selectedItems.forEach(i => i.selected = false);
+                            return;
+                        }
+                        this.s1FoundDates = s1Check.dates;
+                        console.log('S1 dates found:', s1Check.dates);
+                        this.s1FoundDates = s1Check.dates;
+                        this.$toast.add({ 
+                            severity: "success", 
+                            summary: "SAR data found", 
+                            detail: s1Check.message, 
+                            life: 3000
+                        });
+                    } catch (err) {
+                        console.warn('S1 check failed, proceeding anyway:', err);
+                    }
+                }
+            }
+
+            // Generează nume implicit
+            const item = selectedItems[0];
+            const dateMatch = item.id.match(/(\d{8})T/);
+            const dateStr = dateMatch 
+                ? `${dateMatch[1].substring(0,4)}-${dateMatch[1].substring(4,6)}-${dateMatch[1].substring(6,8)}`
+                : '';
+            const tileMatch = item.id.match(/T\d{2}[A-Z]{3}/);
+            const tileId = tileMatch ? tileMatch[0] : '';
+            
+            const taskLabels = {
+                'sr-processor': 'SR',
+                'ch-processor': 'CHM',
+                'cd-processor': 'CD-SR',
+                'cd-chm-processor': 'CD-CHM'
+            };
+            const taskLabel = taskLabels[aiAgentStore.selectedAgent] || 'Result';
+            
+            this.resultName = `${taskLabel} ${tileId} ${dateStr}`.trim();
+            this.pendingProcessItems = selectedItems;
+            this.pendingProcessType = aiAgentStore.selectedAgent === 'cd-processor' ? 'cd' : 'single';
+            this.showNameDialog = true;
+        },
+
+        /**
+         * Called after user confirms the result name.
+         * Starts the actual processing pipeline.
+         */
+        async confirmProcessing() {
+            this.showNameDialog = false;
+            this.cleanupMapOverlays(); 
+            
+            const aiAgentStore = useAIAgentStore();
+            const dialogStore = useDialogStore();
+            aiAgentStore.resultName = this.resultName.trim();
+            
+            if (this.pendingProcessType === 'cd') {
+                await this.processChangeDetection(this.pendingProcessItems);
+                dialogStore.resetCDFlow();
+            } else {
+                this.close();
+                
+                // Progress pentru SR
+                 if (aiAgentStore.selectedAgent === 'sr-processor') {
+                    this.startProgress([
+                        'Downloading Sentinel-2 scene',
+                        'Processing SR pipeline (S1 download, co-registration, inference)',
+                        'Publishing to map'
+                    ]);
+                } else {
+                    this.startProgress([
+                        'Downloading Sentinel-2 scene',
+                        'AI Processing',
+                        'Publishing to map'
+                    ]);
+                }
+
+                try {
+                    for (const item of this.pendingProcessItems) {
+                        await this.processImage(item, aiAgentStore.selectedAgent);
+                    }
+
+                    this.finishProgress();
+                    this.$toast.add({ 
+                        severity: "success", summary: "SUCCESS", 
+                        detail: `"${this.resultName}" processed successfully!`, life: 5000
+                    });
+                    dialogStore.resetAllProcessingState();
+                } catch (error) {
+                    this.finishProgress();
+                    console.error('Error processing images:', error);
+                    this.$toast.add({ 
+                        severity: "error", summary: "ERROR", 
+                        detail: `Processing failed: ${error.message}`, life: 5000
+                    });
+                }
+            }
+        },
+
+        async processImage(item, agentId) {
+            try {
+                // Step 0: Download S2
+                this.updateProgress(0, item.id.substring(0, 40));
+
+                const copernicusStore = useCopernicusStore();
+                const downloadResponse = await copernicusStore.downloadImages([item.stac_item]);
+                
+                if (!downloadResponse || !downloadResponse.task_id) {
+                    throw new Error('Download failed: No task ID received');
+                }
+
+                let downloadCompleted = false;
+                let downloadResult = null;
+                let attempts = 0;
+
+                while (!downloadCompleted && attempts < 60) {
+                    await new Promise(resolve => setTimeout(resolve, 5000));
+                    const statusResponse = await copernicusStore.checkDownloadStatus(downloadResponse.task_id);
+                    if (statusResponse.status === 'completed') {
+                        downloadCompleted = true;
+                        downloadResult = statusResponse;
+                    } else if (statusResponse.status === 'failed') {
+                        throw new Error('Download failed');
+                    }
+                    attempts++;
+                }
+                if (!downloadCompleted) throw new Error('Download timeout');
+
+                const aiAgentStore = useAIAgentStore();
+                let result;
+
+                if (agentId === 'sr-processor') {
+                    // Step 1-4: SR pipeline
+                    const dateMatch = item.id.match(/(\d{8})T/);
+                    const targetDate = dateMatch 
+                        ? `${dateMatch[1].substring(0,4)}-${dateMatch[1].substring(4,6)}-${dateMatch[1].substring(6,8)}`
+                        : item.datetime.substring(0, 10);
+
+                    let s1Date = null;
+                    if (this.s1FoundDates && this.s1FoundDates.length > 0) {
+                        const s2Time = new Date(targetDate).getTime();
+                        s1Date = this.s1FoundDates.reduce((closest, d) => {
+                            const diff = Math.abs(new Date(d).getTime() - s2Time);
+                            const closestDiff = Math.abs(new Date(closest).getTime() - s2Time);
+                            return diff < closestDiff ? d : closest;
+                        });
+                    }
+                    this.updateProgress(1, `S1 download ${s1Date} + co-registration + SR inference — this may take a few minutes...`);
+
+                    const s2Path = downloadResult.files 
+                        ? downloadResult.files[0] 
+                        : `${item.id}/${item.id}.zip`;
+
+                    const bbox = this.getBboxFromSearchArea();
+                    if (!bbox) throw new Error('Could not determine bounding box');
+
+                    result = await aiAgentStore.processWithSelectedAgent({
+                        s2_path: s2Path,
+                        bbox: bbox,
+                        target_date: targetDate,
+                        mode: aiAgentStore.selectedSRMode,
+                        resultName: aiAgentStore.resultName || this.resultName
+                    });
+
+                    this.updateProgress(2, 'Layer published to map');
+                } else {
+                    this.updateProgress(1, 'Running AI model...');
+
+                    const bbox = this.getBboxFromSearchArea();
+                    result = await aiAgentStore.processWithSelectedAgent({
+                        image_filenames: [`${item.id}/${item.id}.zip`],
+                        bbox: bbox,
+                        resultName: aiAgentStore.resultName || this.resultName
+                    });
+
+                    this.updateProgress(2, 'Published');
+                }
+
+                await aiAgentStore.loadProcessingResults(item.id);
+                return result;
+
+            } catch (error) {
+                console.error(`Error processing image ${item.id}:`, error);
+                throw error;
+            }
+        },
+
+        async processChangeDetection(selectedItems) {
+            try {
+                this.cleanupMapOverlays();
+                this.close();
+
+                const dialogStore = useDialogStore();
+
+                // Progress
+                this.startProgress([
+                    'Downloading scene T1',
+                    'Downloading scene T2', 
+                    'Processing SR + Change Detection — this may take several minutes',
+                    'Complete'
+                ]);
+
+                // Mix mode check
+                if (dialogStore.cdSelectedSceneExisting) {
+                    // Mix flow — handled in HomeView
+                    return;
+                }
+
+                const sorted = [...selectedItems].sort((a, b) => 
+                    new Date(a.datetime) - new Date(b.datetime)
+                );
+                
+                const itemT1 = sorted[0];
+                const itemT2 = sorted[1];
+                
+                const bbox = this.getBboxFromSearchArea();
+                const aiAgentStore = useAIAgentStore();
+                const copernicusStore = useCopernicusStore();
+
+                const extractDate = (item) => {
+                    const match = item.id.match(/(\d{8})T/);
+                    return match 
+                        ? `${match[1].substring(0,4)}-${match[1].substring(4,6)}-${match[1].substring(6,8)}`
+                        : item.datetime.substring(0, 10);
+                };
+
+                // Step 0: Download T1
+                this.updateProgress(0, itemT1.id.substring(0, 40));
+                const dl1 = await copernicusStore.downloadImages([itemT1.stac_item]);
+                
+                // Step 1: Download T2
+                this.updateProgress(1, itemT2.id.substring(0, 40));
+                const dl2 = await copernicusStore.downloadImages([itemT2.stac_item]);
+                
+                const waitDownload = async (taskId) => {
+                    for (let i = 0; i < 60; i++) {
+                        await new Promise(r => setTimeout(r, 5000));
+                        const status = await copernicusStore.checkDownloadStatus(taskId);
+                        if (status.status === 'completed') return status;
+                        if (status.status === 'failed') throw new Error('Download failed');
+                    }
+                    throw new Error('Download timeout');
+                };
+
+                const result1 = await waitDownload(dl1.task_id);
+                const result2 = await waitDownload(dl2.task_id);
+
+                const s2PathT1 = result1.files ? result1.files[0] : `${itemT1.id}/${itemT1.id}.zip`;
+                const s2PathT2 = result2.files ? result2.files[0] : `${itemT2.id}/${itemT2.id}.zip`;
+
+                // Step 2-5: SR + CVA (backend handles all steps)
+                this.updateProgress(2, 'SR on both scenes + CVA analysis...');
+
+                const result = await aiAgentStore.processWithSelectedAgent({
+                    scene_t1: { s2_path: s2PathT1, bbox: bbox, target_date: extractDate(itemT1) },
+                    scene_t2: { s2_path: s2PathT2, bbox: bbox, target_date: extractDate(itemT2) },
+                    mode: 'fidelity',
+                    threshold_method: 'otsu',
+                    resultName: aiAgentStore.resultName || this.resultName
+                });
+
+                this.updateProgress(3, 'Complete!');
+                this.finishProgress();
+
+                const stats = result.data.statistics;
+                this.$toast.add({ 
+                    severity: "success", summary: "Change Detection Complete", 
+                    detail: `Changes: ${stats.changed_area_ha} ha (${stats.change_percentage}%)`, life: 15000
+                });
+
+                dialogStore.resetCDFlow();
+                dialogStore.resetAllProcessingState();
+
+            } catch (error) {
+                this.finishProgress();
+                console.error('Change detection error:', error);
+                this.$toast.add({ 
+                    severity: "error", summary: "ERROR", 
+                    detail: `Change detection failed: ${error.message}`, life: 5000
+                });
+            }
+        },
+        
+        showAllResults() {
+            this.selectedProductId = null;
+            this.showResultsDialog = true;
+        },
+        
+        showResultsForProduct(productId) {
+            this.selectedProductId = productId;
+            this.showResultsDialog = true;
+        },
+        
+        hasResultsForProduct(productId) {
+            const aiAgentStore = useAIAgentStore();
+            return aiAgentStore.processingResults[productId] !== undefined;
+        },
+        
+        close(forceReset = false) {
             const dialogStore = useDialogStore();
             dialogStore.hideModelProcessingSearchResultsDialog();
+            
+            if (forceReset) {
+                this.cleanupMapOverlays();
+                dialogStore.resetCDFlow();
+            } else if (!dialogStore.cdFlowStep && !dialogStore.cdSelectedSceneNew) {
+                this.cleanupMapOverlays();
+                dialogStore.resetCDFlow();
+            }
         },
+
+        cleanupMapOverlays() {
+            const mapStore = useMapStore();
+            mapStore.removeDrawLayer();
+            for (const item of this.compatibleAreaItems) {
+                if (item.visible) {
+                    mapStore.removeVectorLayer(item.id);
+                    item.visible = false;
+                }
+                if (item.quicklookVisible) {
+                    mapStore.removeVectorLayer(`preview_${item.id}`);
+                    item.quicklookVisible = false;
+                }
+            }
+        },
+
+        cleanupFootprints() {
+            const mapStore = useMapStore();
+            for (const item of this.compatibleAreaItems) {
+                if (item.visible) {
+                    mapStore.removeVectorLayer(item.id);
+                    item.visible = false;
+                }
+                if (item.quicklookVisible) {
+                    mapStore.removeVectorLayer(`preview_${item.id}`);
+                    item.quicklookVisible = false;
+                }
+            }
+        },
+
         moment(dateString) {
             return moment(dateString);
-        }
+        },
+
+        extractTileInfo(id) {
+            const parts = id.split('_');
+            if (parts.length >= 6) {
+                const level = parts[1];
+                const tile = parts[5];
+                return `${tile} (${level})`;
+            }
+            return id.substring(0, 30);
+        },
+
+       startProgress(steps) {
+            const dialogStore = useDialogStore();
+            dialogStore.showProcessingProgress(steps);
+        },
+
+        updateProgress(step, detail = '') {
+            const dialogStore = useDialogStore();
+            dialogStore.updateProcessingProgress(step, detail);
+        },
+
+        finishProgress() {
+            const dialogStore = useDialogStore();
+            dialogStore.hideProcessingProgress();
+        },
+        cancelNaming() {
+            this.showNameDialog = false;
+            this.cleanupMapOverlays();
+            const dialogStore = useDialogStore();
+            dialogStore.hideModelProcessingSearchResultsDialog();
+            dialogStore.resetAllProcessingState();
+        },
     }
 }
 </script>
 
 <style lang="scss" scoped>
-
 </style>
