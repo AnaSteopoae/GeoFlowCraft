@@ -3,7 +3,7 @@ module.exports = {
         'ch-processor': {
             name: 'Canopy Height Processor',
             description: 'Model pentru estimarea înălțimii canopiei folosind imagini Sentinel-2',
-            url: 'http://localhost:5556',
+            url: process.env.CHM_PROCESSOR_URL || 'http://localhost:5556',
             endpoints: {
                 predict: '/predict/',
                 health: '/health'
@@ -16,7 +16,7 @@ module.exports = {
             name: 'Super Resolution Processor',
             description: 'Super-rezoluție Sentinel-2 (10m → 2.5m) cu fuziune SAR-optică. '
                        + 'Moduri: fidelity (PSNR maxim), balanced, sharp (margini ascuțite).',
-            url: 'http://localhost:5557',
+            url: process.env.SR_PROCESSOR_URL || 'http://localhost:5557',
             endpoints: {
                 predict: '/predict/',
                 health: '/health',
@@ -24,7 +24,7 @@ module.exports = {
             },
             inputFormat: 'sentinel2-s1-stack',
             outputFormat: 'geotiff',
-            copernicusUrl: 'http://localhost:8000',
+            copernicusUrl: process.env.COPERNICUS_URL || 'http://localhost:8000',
             defaultMode: 'balanced'
         },
 
@@ -32,21 +32,21 @@ module.exports = {
             name: 'Change Detection (SR)',
             description: 'Detecția schimbărilor în serii temporale. '
                        + 'Selectează 2 scene din perioade diferite → aplică SR pe ambele → CVA + ΔNDVI.',
-            url: 'http://localhost:8000',
+            url: process.env.COPERNICUS_URL || 'http://localhost:8000',
             endpoints: {
                 predict: '/change-detection',
                 health: '/'
             },
             inputFormat: 'sr-temporal-pair',
             outputFormat: 'geotiff',
-            copernicusUrl: 'http://localhost:8000'
+            copernicusUrl: process.env.COPERNICUS_URL || 'http://localhost:8000'
         },
 
         'cd-chm-processor': {
         name: 'Deforestation Detection (ΔCHM)',
         description: 'Detect forest canopy changes using CHM comparison',
-        url: 'http://localhost:8000',  // Același serviciu Copernicus
-        copernicusUrl: 'http://localhost:8000',
+        url: process.env.COPERNICUS_URL || 'http://localhost:8000',  // Același serviciu Copernicus
+        copernicusUrl: process.env.COPERNICUS_URL || 'http://localhost:8000',
         endpoints: {
             predict: '/change-detection/chm',
             health: '/health'

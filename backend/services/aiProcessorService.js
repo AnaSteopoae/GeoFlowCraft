@@ -5,6 +5,7 @@ const FormData = require('form-data');
 const aiConfig = require('../config/aiProcessorConfig');
 const { autoPublishResult } = require('./autoPublishService');
 const archiver = require('archiver');
+const pathsConfig = require('../config/pathsConfig');
 
 class AIProcessorService {
     
@@ -293,7 +294,8 @@ class AIProcessorService {
         });
 
         // Salvează output-ul
-        const outputDir = path.join(__dirname, '../../service.ai-sr-processor/output');
+        // const outputDir = path.join(__dirname, '../../service.ai-sr-processor/output');
+        const outputDir = pathsConfig.srOutput;
         if (!fs.existsSync(outputDir)) {
             fs.mkdirSync(outputDir, { recursive: true });
         }
@@ -343,6 +345,7 @@ class AIProcessorService {
     async processWithCD(inputData) {
         const agent = aiConfig.aiAgents['cd-processor'];
         const copernicusUrl = agent.copernicusUrl;
+        const resultsDir = pathsConfig.cdSrResults;
 
         let { sr_t1_path, sr_t2_path, scene_t1, scene_t2, 
             mode = 'fidelity', threshold_method = 'otsu' } = inputData;
@@ -392,7 +395,6 @@ class AIProcessorService {
         console.log(`[CD] Complet! Schimbări: ${result.statistics.changed_area_ha} ha (${result.statistics.change_percentage}%)`);
 
         // Creează arhivă ZIP cu toate rezultatele
-        const resultsDir = path.dirname(result.magnitude_path);
         const userResultName = inputData.resultName || `cd_sr_${new Date().toISOString().substring(0, 10)}`;
         const archiveName = userResultName.replace(/[^a-zA-Z0-9_\-]/g, '_');
         let archivePath = null;
@@ -526,14 +528,15 @@ class AIProcessorService {
      // Verificare overlap geografic
     async _checkGeographicOverlap(path1, path2) {
         try {
-            const response = await axios.post(`http://localhost:8000/check/overlap`, {
+            const copernicusUrl = process.env.COPERNICUS_URL || 'http://localhost:8000';
+            const response = await axios.post(`${copernicusUrl}/check/overlap`, {
                 path1: path1,
                 path2: path2
             }, { timeout: 10000 });
             return response.data;
         } catch (err) {
-            console.warn(`[CD] Nu am putut verifica overlap-ul: ${err.message}`);
-            return { overlapping: true }; // Presupune overlap dacă verificarea eșuează
+            console.warn(`[CD] Overlap check failed: ${err.message}`);
+            return { overlapping: true };
         }
     }
 
@@ -590,7 +593,7 @@ class AIProcessorService {
 
     async _createResultsArchive(resultsDir, archiveName) {
         return new Promise((resolve, reject) => {
-            const outputPath = path.join(path.dirname(resultsDir), `${archiveName}.zip`);
+            const outputPath = path.join(resultsDir, `${archiveName}.zip`);
             const output = fs.createWriteStream(outputPath);
             const archive = archiver('zip', { zlib: { level: 6 } });
 
@@ -620,7 +623,8 @@ class AIProcessorService {
      _getOutputDirs() {
         return [
             {
-                dir: path.join(__dirname, '../../service.ai-ch-processor/output'),
+                //dir: path.join(__dirname, '../../service.ai-ch-processor/output'),
+                dir: pathsConfig.chmOutput,
                 service: 'chm',
                 typeDetector: (filename) => {
                     if (filename.includes('predictions')) return 'Canopy Height';
@@ -629,7 +633,8 @@ class AIProcessorService {
                 }
             },
             {
-                dir: path.join(__dirname, '../../service.ai-sr-processor/output'),
+                //dir: path.join(__dirname, '../../service.ai-sr-processor/output'),
+                dir: pathsConfig.srOutput,
                 service: 'sr',
                 typeDetector: (filename) => {
                     if (filename.includes('_rgb')) return null;   // Exclude RGB
@@ -641,7 +646,8 @@ class AIProcessorService {
                 }
             },
             {
-                dir: path.join(__dirname, '../../service.ai-sr-processor/output/change_detection_results'),
+                //dir: path.join(__dirname, '../../service.ai-sr-processor/output/change_detection_results'),
+                dir: path.join(pathsConfig.srOutput, 'change_detection_results'),
                 service: 'cd-sr',
                 typeDetector: (filename) => {
                     if (filename.endsWith('.zip')) return 'CD Results Archive';
@@ -649,7 +655,8 @@ class AIProcessorService {
                 }
             },
             {
-                dir: path.join(__dirname, '../../shared-data/chm_change_results'),
+                //dir: path.join(__dirname, '../../shared-data/chm_change_results'),
+                dir: pathsConfig.chmChangeResults,
                 service: 'cd-chm',
                 typeDetector: (filename) => {
                     if (filename.endsWith('.zip')) return 'CD Results Archive';
