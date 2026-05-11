@@ -270,7 +270,8 @@ export default {
                 return;
             }
 
-            const previewUrl = `http://localhost:8000/preview/s2?bbox=${bbox.join(',')}&date=${date}`;
+            const copernicusUrl = import.meta.env.VITE_COPERNICUS_SERVICE_API_URL || '/copernicus';
+            const previewUrl = `${copernicusUrl}/preview/s2?bbox=${bbox.join(',')}&date=${date}`;
             mapStore.addImageLayer(previewId, previewUrl, bbox);
             item.quicklookVisible = true;
 
