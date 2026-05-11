@@ -16,7 +16,7 @@ const DATASET_IDS = {
 };
 
 // URL serviciul Copernicus (pentru conversie RGB)
-const COPERNICUS_URL = 'http://localhost:8000';
+const COPERNICUS_URL = process.env.COPERNICUS_URL || 'http://localhost:8000';
 
 /**
  * Publică automat un rezultat GeoTIFF pe hartă.
@@ -132,12 +132,13 @@ async function autoPublishResult(options) {
         // 5. Actualizează DataLayer în MongoDB
         // Stocăm calea ORIGINALĂ (float32) pentru descărcare, nu RGB-ul
         const layerName = storeName;
+        const publicGeoserverUrl = process.env.GEOSERVER_PUBLIC_URL || geoserverConfig.url;
         await dataLayerService.updateDataLayer({
             id: dataLayerId,
             name: name,
             description: description,
             geoserver: {
-                url: geoserverConfig.url,
+                url: publicGeoserverUrl,
                 workspace: { name: workspaceName },
                 store: { name: storeName, type: 'GeoTIFF' },
                 layer: {

@@ -76,8 +76,12 @@ export default defineStore("map", {
             // TODO: Implement other layer source types
             switch (layerSourceType) {
                 case "wms":
+                    let geoserverUrl = dataLayerResponse.dataLayer.geoserver.url;
+                    if (geoserverUrl.includes('geoserver:8080')) {
+                        geoserverUrl = '/geoserver';
+                    }
                     let wmsSource = new TileWMS({
-                        url: dataLayerResponse.dataLayer.geoserver.url + "/wms",
+                        url: geoserverUrl + "/wms",
                         params: {
                             FORMAT: dataLayerResponse.dataLayer.geoserver.layer.format.name,
                             LAYERS: dataLayerResponse.dataLayer.geoserver.layer.name
